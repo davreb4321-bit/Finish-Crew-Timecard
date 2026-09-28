@@ -118,9 +118,13 @@ Create an **Automated cloud flow** named **Import Finish Cover Sheet**.
    - Script: **Import Finish Cover Sheet**
 3. **Apply to each** over `outputs('Run_script')?['body/result/rows']`
    1. **Get items** (SCHEDULED JOBS)
-      - Filter Query: `ImportKey eq '@{items('Apply_to_each')?['importKey']}'`
+      - Filter Query: type `ImportKey eq '` then click **fx** and insert the expression
+        `items('Apply_to_each')?['importKey']`, then type a closing `'`. The box should read
+        `ImportKey eq '` [fx items(...)] `'`. Don't paste `@{...}` into the box; the new designer
+        rejects it as an invalid expression.
       - Top Count: `1`
-   2. **Condition:** `length(outputs('Get_items')?['body/value'])` *is equal to* `0`
+   2. **Condition** (directly under Get items, still inside Apply to each). **One row only:**
+      left side **fx** `length(outputs('Get_items')?['body/value'])`, *is equal to*, right side `0`.
       - **If yes → Create item** (SCHEDULED JOBS):
 
         | Field | Value |
@@ -142,6 +146,11 @@ Create an **Automated cloud flow** named **Import Finish Cover Sheet**.
         - **If yes → Update item**. Id: `first(outputs('Get_items')?['body/value'])?['ID']`, with
           the same fields. A corrected re-save updates jobs nobody has submitted yet.
         - **If no →** do nothing. Submitted jobs are never overwritten.
+
+   **Designer tip:** enter every value in steps 3.1–3.2 with **fx** expressions, as shown. If you
+   pick a Get items field from the dynamic-content list instead, the designer silently wraps the
+   step in an extra **For each**. That makes the loop run once per matching item, which is zero
+   times for a new job, so nothing is ever created.
 4. **Move file** (SharePoint). File to Move: the trigger's **Identifier**, Destination Folder:
    `/Shared Documents/Cover Sheet Imported`, If another file is already there: **Replace**.
    This keeps the import folder empty.
