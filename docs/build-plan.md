@@ -111,7 +111,8 @@ Create an **Automated cloud flow** named **Import Finish Cover Sheet**.
    - Folder: `/Shared Documents/Cover Sheet Import`
    - Trigger condition (Settings → Trigger conditions), so only Excel files start the flow:
      `@endsWith(toLower(triggerOutputs()?['body/{FilenameWithExtension}']), '.xlsx')`
-   - The trigger supplies the file **Identifier** and **Created By Email** used below.
+   - The trigger supplies the file **Identifier** and the creator's email
+     (`triggerOutputs()?['body/Author/Email']`) used below.
 2. **Run script** (Excel Online (Business))
    - Location: the SharePoint site, Document Library: Documents
    - File: the trigger's **Identifier**
@@ -154,13 +155,24 @@ Create an **Automated cloud flow** named **Import Finish Cover Sheet**.
 4. **Move file** (SharePoint). File to Move: the trigger's **Identifier**, Destination Folder:
    `/Shared Documents/Cover Sheet Imported`, If another file is already there: **Replace**.
    This keeps the import folder empty.
-5. **Send an email (V2)** To: the trigger's **Created By Email**
-   - Subject: `Cover Sheet imported – @{outputs('Run_script')?['body/result/jobDate']}`
-   - Body: `@{length(outputs('Run_script')?['body/result/rows'])} jobs imported.<br>@{join(outputs('Run_script')?['body/result/warnings'], '<br>')}`
-6. **Error path:** add a parallel **Send an email (V2)** (To: **Created By Email**) after Run script. In its
-   *Configure run after*, check **has failed** only. Subject: `Cover Sheet NOT imported`, Body:
-   `@{outputs('Run_script')?['body/error/message']}`. The sender then learns about a bad date or
-   the wrong template right away.
+5. **Send an email (V2)**, placed below Apply to each. Enter each value with **fx** (don't paste
+   `@{...}` text):
+   - **To:** click in the box → **fx** → `triggerOutputs()?['body/Author/Email']` → **Add**.
+     This is the email of whoever saved the cover sheet. The designer calls it *Created By Email*,
+     and it's often hidden under **See more** in the trigger's dynamic content.
+   - **Subject:** type `Cover Sheet imported – ` then **fx** `outputs('Run_script')?['body/result/jobDate']`
+   - **Body:** **fx** `length(outputs('Run_script')?['body/result/rows'])`, then type
+     ` jobs imported.`, press Enter, then **fx**
+     `join(outputs('Run_script')?['body/result/warnings'], '<br>')`
+6. **Error email.** On the arrow between **Run script** and **Apply to each**, click **+** → **Add a
+   parallel branch** → **Send an email (V2)**. Then on that email's **Settings** tab → **Run
+   after**, expand **Run script**, uncheck **Is successful** and check **Has failed**.
+   - **To:** **fx** `triggerOutputs()?['body/Author/Email']`
+   - **Subject:** `Cover Sheet NOT imported`
+   - **Body:** type `The cover sheet could not be imported: ` then **fx**
+     `coalesce(outputs('Run_script')?['body/error/message'], outputs('Run_script')?['body/message'], 'See the flow run history for details.')`
+
+   The sender then learns about a bad date or the wrong template right away.
 
 **Test:** save the sample cover sheet into the folder. With the B4 typo you should get the error
 email. Fix B4, save again, and the two jobs appear in SCHEDULED JOBS. Save a third time and there
