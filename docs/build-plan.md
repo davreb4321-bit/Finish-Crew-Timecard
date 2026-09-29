@@ -249,9 +249,10 @@ remember to use a new name each time.
 
 ```
 ClearCollect(colPaySplits, 'FINISH INSTALLER PAY SPLITS');
-Set(varSchedJob, Blank());
 Set(varJobInfoLoaded, false);
 ```
+(`varSchedJob` is added in Phase 6. Setting it before the job picker exists shows as an error.)
+
 The pay split list is small, so it's loaded once into memory. Lookups are then instant, have no
 delegation limit, and can ignore upper/lower case and extra spaces in names.
 
@@ -585,7 +586,6 @@ button as is (edit mode, shop pay, Navigate).
 **btnEditTimeCard.OnSelect**: add at the top:
 ```
 Set(varJobInfoLoaded, false);
-Set(varSchedJob, Blank());
 ```
 
 **btnApproved** email: in the two `% of Pay` lines, change
@@ -629,6 +629,13 @@ column.
 
 ### 6.1 Data source
 Power Apps → Data → Add data → SharePoint → IndyWarrantyTracking-NRG365 → **SCHEDULED JOBS**.
+
+**Order matters:** build **scrSelectJob and galSchedJobs.OnSelect (6.3) first**. Its
+`Set(varSchedJob, ThisItem)` tells Power Apps what `varSchedJob` is. Only then add the
+`Set(varSchedJob, Blank())` lines below, plus these two deferred from Phase 4:
+- **App.OnStart**, at the end: `Set(varSchedJob, Blank());`
+- **scrTimeCardDetail → btnEditTimeCard.OnSelect**, at the top, after
+  `Set(varJobInfoLoaded, false);`: `Set(varSchedJob, Blank());`
 
 ### 6.2 scrHome: New Time Card button, OnSelect (replace)
 ```
