@@ -1,4 +1,3 @@
-Attribute VB_Name = "SendToFinishCrewApp"
 ' ============================================================================
 ' Send to Finish Crew App
 '
