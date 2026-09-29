@@ -42,7 +42,7 @@ function main(workbook: ExcelScript.Workbook): ImportResult {
   const col = (name: string): number => {
     const i = headers.indexOf(name.toLowerCase());
     if (i < 0) {
-      throw new Error(`Column "${name}" was not found in table FINISHCOVER.`);
+      throw new Error("Column \"" + name + "\" was not found in table FINISHCOVER.");
     }
     return i;
   };
@@ -78,7 +78,7 @@ function main(workbook: ExcelScript.Workbook): ImportResult {
     const sheetRow = i + 7; // table header is row 6
 
     if (seen.indexOf(jobNumber) >= 0) {
-      warnings.push(`Row ${sheetRow}: ${jobNumber} is listed more than once; only the first row was imported.`);
+      warnings.push("Row " + sheetRow + ": " + jobNumber + " is listed more than once; only the first row was imported.");
       return;
     }
     seen.push(jobNumber);
@@ -92,7 +92,7 @@ function main(workbook: ExcelScript.Workbook): ImportResult {
       subdivision: lookupValue(r[c.subdivision]),
       lot: lookupValue(r[c.lot]),
       phase: clean(r[c.phase]).toUpperCase(),
-      importKey: `${jobNumber}|${jobDate}`
+      importKey: jobNumber + "|" + jobDate
     };
 
     const missing: string[] = [];
@@ -102,7 +102,7 @@ function main(workbook: ExcelScript.Workbook): ImportResult {
     if (row.lot === "") missing.push("Lot #");
     if (row.leadInstaller === "") missing.push("Lead Installer");
     if (missing.length > 0) {
-      warnings.push(`Row ${sheetRow} (${jobNumber}): missing ${missing.join(", ")}. Installer will need to fill these in.`);
+      warnings.push("Row " + sheetRow + " (" + jobNumber + "): missing " + missing.join(", ") + ". Installer will need to fill these in.");
     }
 
     rows.push(row);
@@ -117,7 +117,7 @@ function main(workbook: ExcelScript.Workbook): ImportResult {
 
 /** Collapses whitespace/line breaks from wrapped cells. */
 function clean(value: string): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
+  return (value === undefined || value === null ? "" : String(value)).replace(/\s+/g, " ").trim();
 }
 
 /** Production-schedule XLOOKUP cells show "Not found" or "#REF!"-style errors when the link fails; treat those as blank. */
@@ -143,13 +143,14 @@ function readJobDate(cell: ExcelScript.Range): string {
     m = dt.getUTCMonth() + 1;
     d = dt.getUTCDate();
   } else {
-    const match = String(raw).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
-    if (!match) {
-      throw new Error(`Job Date in B4 ("${cell.getText()}") is not a valid date. Use m/d/yyyy.`);
+    const parts = String(raw).trim().split("/");
+    const digitsOnly = parts.every(p => p.length > 0 && !isNaN(Number(p)) && p.indexOf(".") < 0);
+    if (parts.length !== 3 || !digitsOnly || parts[2].length > 4) {
+      throw new Error("Job Date in B4 (\"" + cell.getText() + "\") is not a valid date. Use m/d/yyyy.");
     }
-    m = Number(match[1]);
-    d = Number(match[2]);
-    y = Number(match[3]);
+    m = Number(parts[0]);
+    d = Number(parts[1]);
+    y = Number(parts[2]);
     if (y < 100) {
       y += 2000;
     }
@@ -161,8 +162,8 @@ function readJobDate(cell: ExcelScript.Range): string {
     check.getUTCFullYear() !== y || check.getUTCMonth() !== m - 1 || check.getUTCDate() !== d ||
     y < currentYear - 1 || y > currentYear + 1
   ) {
-    throw new Error(`Job Date in B4 ("${cell.getText()}") is not a valid date. Use m/d/yyyy.`);
+    throw new Error("Job Date in B4 (\"" + cell.getText() + "\") is not a valid date. Use m/d/yyyy.");
   }
 
-  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  return y + "-" + (m < 10 ? "0" : "") + m + "-" + (d < 10 ? "0" : "") + d;
 }
