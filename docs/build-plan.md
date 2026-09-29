@@ -1,5 +1,14 @@
 # Finish Crew Timecard — Cover Sheet Prefill & Pay Math Build Plan
 
+*Last updated 2026-09-29. Reflects the import flow, Send macro and app changes as built and
+tested.*
+
+Files in this repository:
+- `docs/build-plan.md`: this plan
+- `office-scripts/Import Finish Cover Sheet.ts`: Office Script used by the import flow
+- `excel-macros/SendToFinishCrewApp.bas`: "Send to Finish Crew App" button for the daily-entry
+  workbook
+
 Work through the phases in order. Each phase can be tested before starting the next.
 Every formula below uses the control and column names from the current app export.
 
@@ -11,7 +20,7 @@ Every formula below uses the control and column names from the current app expor
 | 3A | Office hand-off: fill in the sheet, click Send | Excel (desktop) |
 | 4 | Restore pay splits and fix the pay math | Power Apps (scrJobInfo, scrPayItems, scrTimeCardDetail) |
 | 5 | Builder as text | Power Apps and existing flows |
-| 6 | Job picker and prefill | Power Apps |
+| 6 | Job picker, prefill, lead-only job list and navigation | Power Apps |
 | 7 | Test | — |
 
 Phase 4 fixes the current app, so do it (and test it) before the prefill work in Phase 6.
@@ -244,6 +253,21 @@ remember to use a new name each time.
 ---
 
 ## Phase 4 — Restore pay splits and fix the pay math
+
+**Before you start:**
+- Save the app with a note such as "Before Phase 4" (restore later from **Details → Versions**
+  if needed).
+- **Installer names must match exactly** in three places, or the pay split (and later the job
+  list and emails) won't find the person:
+  1. **FINISH INSTALLER PAY SPLITS**: Lead Installer and Helper Installer columns
+  2. **FINISH CREW EMAIL LIST**: Employee Name
+  3. What the Production office types on the cover sheet
+
+  Examples found in the pay splits list: "Matt Montgomery" / "Matthew Montgomery", "Lal Ro" /
+  "Lal Ropuia", "Bryant Barrios" / "Bryant Barrios Chavez". Pick one spelling per person. A
+  drop-down list (Data Validation → List) on the cover sheet's installer columns prevents typos.
+- Pay splits are stored as whole numbers (50/50, 55/45) and always total 100. The formulas below
+  handle that as written.
 
 ### 4.1 App.OnStart: add at the end
 
@@ -525,40 +549,205 @@ Patch(
 )
 ```
 
-**btnToLineItems.OnSelect** (Submit Time Card): replace the three `Set(varSelectedItemsTotal…)`,
-`Set(varLeadInstallerTotalPay…)` and `Set(varHelperInstallerTotalPay…)` blocks with:
+**btnToLineItems.OnSelect** (Submit Time Card). Replace the whole formula with:
 ```
-Set(varSelectedItemsTotal, Round(Sum(colLineItems, 'Extended Total'), 2));
+If(
+    CountRows(colLineItems) = 0 &&
+    Coalesce(varLeadShopPay, 0) = 0 &&
+    Coalesce(varHelperShopPay, 0) = 0,
 
-Set(
-    varLeadInstallerTotalPay,
-    Round(Coalesce(varLeadShopPay, 0) + varSelectedItemsTotal * Coalesce(varLeadPercent, 0) / 100, 2)
-);
+    Notify(
+        "You must add at least one pay item or enter shop pay before submitting.",
+        NotificationType.Error
+    ),
 
-Set(
-    varHelperInstallerTotalPay,
-    Round(Coalesce(varHelperShopPay, 0) + varSelectedItemsTotal * Coalesce(varHelperPercent, 0) / 100, 2)
-);
+    Set(
+        varJobNumber,
+        LookUp(
+            SUBMISSIONS,
+            ID = varSubmissionID
+        ).'Job Number'
+    );
+
+    // ---- Totals (rounded to the cent) ----
+    Set(
+        varSelectedItemsTotal,
+        Round(Sum(colLineItems, 'Extended Total'), 2)
+    );
+
+    Set(
+        varLeadInstallerTotalPay,
+        Round(
+            Coalesce(varLeadShopPay, 0) +
+            varSelectedItemsTotal * Coalesce(varLeadPercent, 0) / 100,
+            2
+        )
+    );
+
+    Set(
+        varHelperInstallerTotalPay,
+        Round(
+            Coalesce(varHelperShopPay, 0) +
+            varSelectedItemsTotal * Coalesce(varHelperPercent, 0) / 100,
+            2
+        )
+    );
+
+    /*
+       When editing an existing Time Card, remove its old
+       LINE ITEMS records before saving the current collection.
+    */
+    If(
+        varEditMode,
+        RemoveIf(
+            'LINE ITEMS',
+            'Time Card Number' = Value(varSubmissionID)
+        )
+    );
+
+    /*
+       Recreate LINE ITEMS from the current contents of
+       colLineItems. Deleted collection rows are not recreated.
+    */
+    ForAll(
+        colLineItems,
+        Patch(
+            'LINE ITEMS',
+            Defaults('LINE ITEMS'),
+            {
+                'Time Card Number': Value(varSubmissionID),
+                'Job Number': varJobNumber,
+                'Item Code': Coalesce(
+                    'ItemCode',
+                    ItemCode
+                ),
+                'Pay Item': 'Pay Item',
+                Category: Category,
+                Quantity: Quantity,
+                Hours: Hours,
+                Rate: Rate,
+                'Extended Total': 'Extended Total',
+                'Display Order': 'Display Order'
+            }
+        )
+    );
+
+    Patch(
+        SUBMISSIONS,
+        LookUp(
+            SUBMISSIONS,
+            ID = varSubmissionID
+        ),
+        {
+            'Total Select Items Pay': varSelectedItemsTotal,
+            'Lead Installer Total Pay': varLeadInstallerTotalPay,
+            'Helper Installer Total Pay': varHelperInstallerTotalPay,
+            Status: {
+                Value: "Submitted"
+            }
+        }
+    );
+
+    // (Phase 6.5 inserts the "mark scheduled job submitted" block here.)
+
+    Refresh('LINE ITEMS');
+    Refresh(SUBMISSIONS);
+
+    Set(
+        varSelectedSubmission,
+        LookUp(
+            SUBMISSIONS,
+            ID = varSubmissionID
+        )
+    );
+
+    Clear(colLineItems);
+
+    // ---- Reset for the next time card ----
+    Set(varTotalPay, 0);
+    Set(varSelectedItemsTotal, 0);
+    Set(varLeadInstallerTotalPay, 0);
+    Set(varHelperInstallerTotalPay, 0);
+    Set(varLeadShopPay, 0);
+    Set(varHelperShopPay, 0);
+    Set(varLeadPercent, 0);
+    Set(varHelperPercent, 0);
+    Set(varLeadHourlyRate, 0);
+    Set(varHelperHourlyRate, 0);
+    Set(varEditMode, false);
+
+    Notify(
+        "Time Card Submitted",
+        NotificationType.Success
+    );
+
+    Navigate(
+        scrOpenSubmissions,
+        ScreenTransition.Fade
+    )
+)
 ```
-In the same formula, add these two lines to the reset block at the end (next to
-`Set(varLeadShopPay, 0);`). Otherwise the next time card starts with the previous card's rates:
-```
-Set(varLeadHourlyRate, 0);
-Set(varHelperHourlyRate, 0);
-```
-(Phase 6 adds one more block to this button.)
+Changes from the original: totals rounded to the cent, and the hourly rates reset **at the end**
+(not before saving). Clearing them earlier would zero shop pay if the user went back to
+scrJobInfo. The odd-looking `'Item Code': Coalesce('ItemCode', ItemCode)` is original and keeps
+item codes when a card is edited.
 
 ### 4.7 scrTimeCardDetail
 
-**btnEditPayItems.OnSelect**: replace the two percentage `Set`s and the `ClearCollect`:
+**btnEditPayItems.OnSelect**. Replace the whole formula with:
 ```
+Set(
+    varEditMode,
+    true
+);
+
+Set(
+    varSubmissionID,
+    varSelectedSubmission.ID
+);
+
 Set(
     varLeadPercent,
     Coalesce(Value(Substitute(varSelectedSubmission.'Lead Installer % of Pay', "%", "")), 0)
 );
+
 Set(
     varHelperPercent,
     Coalesce(Value(Substitute(varSelectedSubmission.'Helper Installer % of Pay', "%", "")), 0)
+);
+
+Set(
+    varLeadHourlyRate,
+    LookUp(
+        'FINISH INSTALLER PAY SPLITS',
+        'Lead Installer' = varSelectedSubmission.'Lead Installer' &&
+        'Helper Installer' = varSelectedSubmission.'Helper Installer'
+    ).'Lead Hourly Pay Rate'
+);
+
+Set(
+    varHelperHourlyRate,
+    LookUp(
+        'FINISH INSTALLER PAY SPLITS',
+        'Lead Installer' = varSelectedSubmission.'Lead Installer' &&
+        'Helper Installer' = varSelectedSubmission.'Helper Installer'
+    ).'Helper Hourly Pay Rate'
+);
+
+Set(
+    varLeadShopPay,
+    Coalesce(
+        varSelectedSubmission.'Lead Installer Total Shop Pay',
+        0
+    )
+);
+
+Set(
+    varHelperShopPay,
+    Coalesce(
+        varSelectedSubmission.'Helper Installer Total Shop Pay',
+        0
+    )
 );
 
 ClearCollect(
@@ -578,20 +767,192 @@ ClearCollect(
         }
     )
 );
+
+Navigate(
+    scrPayItems,
+    ScreenTransition.Fade
+)
 ```
-The old version dropped **RequiresManualRate**. When a saved card was edited, manual-rate items
-had their rate locked and quantity unlocked, the reverse of new cards. Leave the rest of the
-button as is (edit mode, shop pay, Navigate).
+- The old `ClearCollect(colLineItems, RenameColumns(...))` is **removed**. It dropped
+  **RequiresManualRate**, so manual-rate items behaved backwards when a card was re-edited, and it
+  would overwrite the new collection if left in.
+- If `Category: li.Category` shows red, LINE ITEMS Category is a Choice column: use
+  `Category: li.Category.Value`.
 
 **btnEditTimeCard.OnSelect**: add at the top:
 ```
 Set(varJobInfoLoaded, false);
 ```
+(Phase 6 adds `Set(varSchedJob, Blank());` right after it.)
 
-**btnApproved** email: in the two `% of Pay` lines, change
-`Value(varSelectedSubmission.'Lead Installer % of Pay')` to
-`Value(Substitute(varSelectedSubmission.'Lead Installer % of Pay', "%", ""))`, and do the same for
-Helper. Otherwise a percent typed as "60%" shows as 0.6% in the email.
+**btnApproved.OnSelect**. Replace the whole formula with:
+```
+Patch(
+    SUBMISSIONS,
+    varSelectedSubmission,
+    {
+        Status: {
+            Value: "Approved"
+        },
+        'Supervisor Approval': User().FullName,
+        'Approved Date': Now(),
+        'General Comments':
+            varSelectedSubmission.'General Comments'
+    }
+);
+
+Office365Outlook.SendEmailV2(
+
+    LookUp(
+        'FINISH CREW EMAIL LIST',
+        'Employee Name' = varSelectedSubmission.'Lead Installer'
+    ).'Email Address' & ";" &
+
+    LookUp(
+        'FINISH CREW EMAIL LIST',
+        'Employee Name' = varSelectedSubmission.'Helper Installer'
+    ).'Email Address',
+
+    "FINISH CREW TIME CARD #" &
+    varSelectedSubmission.ID &
+    " APPROVED",
+
+    "Your Finish Crew Time Card has been approved." &
+
+    "<br><br><b>Time Card #:</b> " &
+    varSelectedSubmission.ID &
+
+    "<br><b>Job Number:</b> " &
+    varSelectedSubmission.'Job Number' &
+
+    "<br><b>Job Date:</b> " &
+    Text(
+        varSelectedSubmission.'Job Date',
+        "mm/dd/yyyy"
+    ) &
+
+    "<br><b>Builder:</b> " &
+    Coalesce(varSelectedSubmission.'Builder Name', varSelectedSubmission.Builder.Value) &
+
+    "<br><b>Subdivision:</b> " &
+    varSelectedSubmission.Subdivision &
+
+    "<br><b>Lot Number:</b> " &
+    varSelectedSubmission.'Lot Number' &
+
+    "<br><b>Street Address:</b> " &
+    varSelectedSubmission.'Street Address' &
+
+    "<br><b>Zip Code:</b> " &
+    varSelectedSubmission.'Zip Code' &
+
+    "<br><b>Supervisor:</b> " &
+    varSelectedSubmission.Supervisor &
+
+    "<br><br><b>Lead Installer:</b> " &
+    varSelectedSubmission.'Lead Installer' &
+
+    "<br><b>Lead Installer % of Pay:</b> " &
+    Text(
+        Coalesce(
+            Value(Substitute(varSelectedSubmission.'Lead Installer % of Pay', "%", "")),
+            0
+        ),
+        "0.##"
+    ) &
+    "%" &
+
+    "<br><b>Lead Installer Total Pay:</b> " &
+    Text(
+        Coalesce(
+            varSelectedSubmission.'Lead Installer Total Pay',
+            0
+        ),
+        "$#,##0.00"
+    ) &
+
+    "<br><br><b>Helper Installer:</b> " &
+    Coalesce(
+        varSelectedSubmission.'Helper Installer',
+        ""
+    ) &
+
+    "<br><b>Helper Installer % of Pay:</b> " &
+    Text(
+        Coalesce(
+            Value(Substitute(varSelectedSubmission.'Helper Installer % of Pay', "%", "")),
+            0
+        ),
+        "0.##"
+    ) &
+    "%" &
+
+    "<br><b>Helper Installer Total Pay:</b> " &
+    Text(
+        Coalesce(
+            varSelectedSubmission.'Helper Installer Total Pay',
+            0
+        ),
+        "$#,##0.00"
+    ) &
+
+    "<br><br><b>Total Selected Items Pay:</b> " &
+    Text(
+        Coalesce(
+            varSelectedSubmission.'Total Select Items Pay',
+            0
+        ),
+        "$#,##0.00"
+    ) &
+
+    "<br><br><b>Approved By:</b> " &
+    User().FullName &
+
+    "<br><b>Approved Date:</b> " &
+    Text(
+        Now(),
+        "mm/dd/yyyy h:mm AM/PM"
+    ) &
+
+    "<br><br><b>General Comments:</b>" &
+    "<br>" &
+    Coalesce(
+        DataCardValue11.Text,
+        ""
+    ) &
+
+    "<br><br>No further action is needed for this approved time card.",
+
+    {
+        Importance: "Normal"
+    }
+);
+
+Notify(
+    "Time Card Approved",
+    NotificationType.Success
+);
+
+Notify(
+    "Approval Email Sent",
+    NotificationType.Success
+);
+
+Set(
+    varSelectedSubmission,
+    Blank()
+);
+
+Navigate(
+    scrOpenSubmissions,
+    ScreenTransition.Fade
+)
+```
+- Both `% of Pay` lines strip a typed "%" before converting, so "60%" no longer shows as 0.6%.
+- The Builder line uses the Phase 5 **Builder Name** column. If you do Phase 4 before creating
+  that column, temporarily use `varSelectedSubmission.Builder.Value &` on that line.
+- Every piece of the email body must be joined with `&`. One missing `&` turns every line after it
+  red.
 
 **Test Phase 4 now** (section 7.2) before continuing.
 
@@ -610,9 +971,13 @@ Helper. Otherwise a percent typed as "60%" shows as 0.6% in the email.
 
 | Screen / control | Text |
 |---|---|
-| scrOpenSubmissions → lblBuilder | `"Builder: " & Coalesce(ThisItem.'Builder Name', ThisItem.Builder.Value)` |
+| scrOpenSubmissions → job/builder label | `"Job: " & ThisItem.'Job Number' & "   Builder: " & Coalesce(ThisItem.'Builder Name', ThisItem.Builder.Value)` |
+| scrOpenSubmissions → subdivision/lot label | `"Subdivision: " & ThisItem.Subdivision & "   Lot: " & ThisItem.'Lot Number'` (delete the separate Lot label) |
 | scrTimeCardDetail → lblBuilderName | `"Builder: " & Coalesce(varSelectedSubmission.'Builder Name', varSelectedSubmission.Builder.Value)` |
-| scrTimeCardDetail → btnApproved email | replace `varSelectedSubmission.Builder.Value` with `Coalesce(varSelectedSubmission.'Builder Name', varSelectedSubmission.Builder.Value)` |
+| scrTimeCardDetail → btnApproved email | Already done in the full formula in 4.7 |
+
+To put Builder on its own line, use `Char(10)` in place of the spaces and set the label's
+**AutoHeight** to `true`.
 
 ### 5.3 Existing flows
 Anywhere the daily Cover Sheet flow or the approval/rejection flows read Builder
@@ -627,15 +992,39 @@ column.
 
 ## Phase 6 — Job picker and prefill
 
-### 6.1 Data source
+### 6.1 Data source and deferred lines
 Power Apps → Data → Add data → SharePoint → IndyWarrantyTracking-NRG365 → **SCHEDULED JOBS**.
 
 **Order matters:** build **scrSelectJob and galSchedJobs.OnSelect (6.3) first**. Its
-`Set(varSchedJob, ThisItem)` tells Power Apps what `varSchedJob` is. Only then add the
-`Set(varSchedJob, Blank())` lines below, plus these two deferred from Phase 4:
-- **App.OnStart**, at the end: `Set(varSchedJob, Blank());`
-- **scrTimeCardDetail → btnEditTimeCard.OnSelect**, at the top, after
-  `Set(varJobInfoLoaded, false);`: `Set(varSchedJob, Blank());`
+`Set(varSchedJob, ThisItem)` tells Power Apps what `varSchedJob` is. Until it exists, any
+`Set(varSchedJob, Blank())` shows as an error, and an error anywhere in App.OnStart stops **all**
+of OnStart from running (pay splits and supervisor access included).
+
+After 6.3 is in place, `Set(varSchedJob, Blank());` goes in these five places:
+
+| # | Where | Position |
+|---|---|---|
+| 1 | App → OnStart | At the end (see below) |
+| 2 | scrHome → New Time Card → OnSelect (6.2) | First line |
+| 3 | scrSelectJob → Job Not Listed → OnSelect (6.3) | Already in that formula |
+| 4 | scrTimeCardDetail → btnEditTimeCard → OnSelect | At the top, after `Set(varJobInfoLoaded, false);` |
+| 5 | scrPayItems → btnToLineItems → OnSelect (6.5) | End of the "mark job submitted" block |
+
+**App.OnStart**: add at the end:
+```
+Set(varSchedJob, Blank());
+
+Set(
+    varMyName,
+    LookUp(
+        'FINISH CREW EMAIL LIST',
+        Lower('Email Address') = Lower(User().Email)
+    ).'Employee Name'
+);
+```
+`varMyName` is the signed-in person's name from the email list. The job list (6.3) uses it so each
+Lead Installer sees only their own jobs. The email list is small, so a delegation warning on this
+line is harmless.
 
 ### 6.2 scrHome: New Time Card button, OnSelect (replace)
 ```
@@ -650,29 +1039,76 @@ Copy scrOpenSubmissions' header and logo for a consistent look, then add:
 - **txtSearchSchedJob** (Text input), HintText `"Search job # or lead installer"`
 - **galSchedJobs** (vertical gallery)
 - **btnJobNotListed** (Button), Text `"Job Not Listed"`
+- **Open Submissions** button (6.7)
 - A back arrow: `Navigate(scrHome, ScreenTransition.Fade)`
 
-**galSchedJobs.Items** lists open jobs from the last 3 days, so a late time card still finds its
-job:
+**scrSelectJob.OnVisible** shows jobs imported since the screen was last opened:
 ```
-Sort(
-    Filter(
-        'SCHEDULED JOBS',
-        JobStatus = "Open",
-        JobDate >= DateAdd(Today(), -3, TimeUnit.Days),
-        txtSearchSchedJob.Text = "" ||
-            StartsWith(Title, txtSearchSchedJob.Text) ||
-            StartsWith(LeadInstaller, txtSearchSchedJob.Text)
-    ),
-    JobDate,
-    SortOrder.Descending
-)
+Refresh('SCHEDULED JOBS')
 ```
 
-Gallery labels:
-- `ThisItem.Title & "   Lot " & ThisItem.LotNumber & "   " & Text(ThisItem.JobDate, "m/d")`
-- `ThisItem.Builder & " – " & ThisItem.Subdivision`
-- `ThisItem.LeadInstaller & If(IsBlank(ThisItem.HelperInstaller), "", " / " & ThisItem.HelperInstaller) & "   " & ThisItem.Phase`
+**galSchedJobs.Items** shows open jobs from the last 3 days onward (so late time cards still find
+their job). **Supervisors** see every job; everyone else sees only jobs where they are the **Lead
+Installer**:
+```
+With(
+    {
+        jobs: If(
+            varSupervisor,
+            Filter(
+                'SCHEDULED JOBS',
+                JobStatus = "Open",
+                JobDate >= DateAdd(Today(), -3, TimeUnit.Days)
+            ),
+            Filter(
+                'SCHEDULED JOBS',
+                JobStatus = "Open",
+                JobDate >= DateAdd(Today(), -3, TimeUnit.Days),
+                LeadInstaller = varMyName
+            )
+        )
+    },
+    Sort(
+        Filter(
+            jobs,
+            txtSearchSchedJob.Text = "" ||
+            StartsWith(Title, txtSearchSchedJob.Text) ||
+            StartsWith(LeadInstaller, txtSearchSchedJob.Text)
+        ),
+        JobDate,
+        SortOrder.Descending
+    )
+)
+```
+- To let **helpers** see their jobs too, change the last filter line to
+  `LeadInstaller = varMyName || HelperInstaller = varMyName`.
+- If a crew is swapped, the new lead won't see the job. A supervisor can, or the lead uses **Job
+  Not Listed**.
+- If the gallery shows one blank row reading "Lot" and "–", the filter returned no jobs. Test
+  jobs dated more than 3 days ago are hidden; send a sheet with today's date, or temporarily
+  change `-3` to `-30`.
+
+**Gallery labels.** Each line is the **Text** of a separate label inside the gallery's first
+(template) row. Add a label with Insert → Text label if the layout has only two.
+
+| Label | Text |
+|---|---|
+| lblLotNumberJobDate | `ThisItem.Title & "   Lot " & ThisItem.LotNumber & "   " & Text(ThisItem.JobDate, "m/d")` |
+| lblBuilderSub | `ThisItem.Builder & " – " & ThisItem.Subdivision` |
+| lblInstallerPhase | `ThisItem.LeadInstaller & If(IsBlank(ThisItem.HelperInstaller), "", " / " & ThisItem.HelperInstaller) & "   " & ThisItem.Phase` |
+
+If lines overlap, raise the gallery's **TemplateSize** (for example `110`). Set any label or
+icon's OnSelect in the row to `Select(Parent)`.
+
+**Empty-list message.** Add a label on scrSelectJob. **Visible:**
+`CountRows(galSchedJobs.AllItems) = 0`. **Text:**
+```
+If(
+    !varSupervisor && IsBlank(varMyName),
+    "Your email isn't on the Finish Crew Email List. See your supervisor, or use Job Not Listed.",
+    "No scheduled jobs found for you. If your job is missing, use Job Not Listed."
+)
+```
 
 **galSchedJobs.OnSelect**
 ```
@@ -688,7 +1124,12 @@ Navigate(scrJobInfo, ScreenTransition.Fade)
 Pay splits load automatically: scrJobInfo.OnVisible runs btnLoadPaySplit (Phase 4.3) against
 the prefilled names.
 
-**btnJobNotListed.OnSelect** (same as the old New Time Card):
+**btnJobNotListed**: the way out when the job isn't on the list (left off or added after the
+cover sheet was sent, sheet not imported yet, callbacks or warranty work, or dated outside the
+3-day window). It opens a **blank** job info form that isn't linked to any scheduled job, like the
+old New Time Card. Rename its Text if clearer, e.g. `"Enter Job Manually"`.
+
+**OnSelect:**
 ```
 NewForm(frmSubmission);
 Set(varSubmissionID, 0);
@@ -760,6 +1201,70 @@ If(
 );
 ```
 
+### 6.7 Navigation
+
+Every route into a **new** time card must run the same reset (NewForm plus the variable resets)
+used by galSchedJobs and Job Not Listed. Leaving scrJobInfo must never require pressing **Next**,
+because Next saves the record.
+
+Put the **Open Submissions** button in the same spot (for example the header beside the logo) on
+every screen that has one.
+
+**scrSelectJob → Open Submissions button → OnSelect**
+```
+Refresh(SUBMISSIONS);
+Navigate(scrOpenSubmissions, ScreenTransition.Fade)
+```
+
+**scrJobInfo → Open Submissions button → OnSelect.** Discards the unsaved form and clears working
+variables. Nothing is created for a new card; unsaved edits to an existing card are discarded.
+```
+If(
+    frmSubmission.Unsaved,
+    Notify("Unsaved changes were discarded.", NotificationType.Warning)
+);
+
+ResetForm(frmSubmission);
+Set(varEditMode, false);
+Set(varEditSubmission, Blank());
+Set(varSchedJob, Blank());
+Set(varJobInfoLoaded, false);
+Clear(colLineItems);
+
+Refresh(SUBMISSIONS);
+Navigate(scrOpenSubmissions, ScreenTransition.Fade)
+```
+
+**scrJobInfo → back arrow (ArrowBehind) → OnSelect.** Returns to where the user came from.
+```
+If(
+    varEditMode,
+    Set(varEditMode, false);
+    Navigate(scrTimeCardDetail, ScreenTransition.Fade),
+    Navigate(scrSelectJob, ScreenTransition.Fade)
+)
+```
+(Replace `scrTimeCardDetail` with `scrHome` if editing should return Home.)
+
+**Any "forward" arrow that jumps straight into scrJobInfo** (for example scrHome's
+`btnToJobInfo`) skips the reset and can show the previous card's data. Delete it, or give it the
+same OnSelect as **Job Not Listed** (6.3).
+
+**scrPayItems → forward arrow to Open Submissions → OnSelect.** In new mode, **Next** has already
+created the SUBMISSIONS record without pay items. This tells the user:
+```
+If(
+    !varEditMode,
+    Notify("This time card was saved without pay items. Open it from Open Submissions to finish or delete it.", NotificationType.Warning)
+);
+Clear(colLineItems);
+Set(varEditMode, false);
+Navigate(scrOpenSubmissions, ScreenTransition.Fade)
+```
+
+The scrPayItems back arrow (to scrJobInfo) and the scrSelectJob back arrow (to scrHome) stay as
+they are.
+
 ---
 
 ## Phase 7 — Testing
@@ -800,12 +1305,23 @@ live labels), and on scrTimeCardDetail and the approval email (saved values).
 
 ### 7.4 Phase 6 tests (prefill)
 - [ ] Import a cover sheet → jobs appear in the picker with the correct date, lot, builder and installers.
+- [ ] Signed in as a **lead installer** → only that lead's jobs show. As a **supervisor** → all open jobs show.
+- [ ] User not on the email list → empty-list message tells them to see a supervisor / use Job Not Listed.
 - [ ] Pick a job → all eight fields plus the date prefill; schedule fields are locked; % and rates load.
 - [ ] Swap the helper → split reloads for the new pair.
 - [ ] Submit → the job leaves the picker; SUBMISSIONS.ScheduledJobID and SCHEDULED JOBS.SubmissionID are set.
 - [ ] Job Not Listed → blank form, same as before.
 - [ ] Delete that time card → the job reappears in the picker.
 - [ ] Daily Cover Sheet report → unchanged output.
+
+### 7.5 Navigation tests
+- [ ] scrSelectJob → Open Submissions → nothing is created.
+- [ ] New card on scrJobInfo → Open Submissions → nothing is created; the next New Time Card starts blank.
+- [ ] Edited card on scrJobInfo → Open Submissions without saving → the saved values are unchanged.
+- [ ] Back arrow on a **new** card → scrSelectJob; on an **edited** card → scrTimeCardDetail.
+- [ ] Any forward arrow into scrJobInfo → blank form, no leftover data or pay split.
+- [ ] scrPayItems (new card) → Open Submissions → warning shows; the incomplete card is listed and can be edited or deleted.
+- [ ] Leave scrSelectJob, send a new cover sheet, come back → new jobs appear (OnVisible refresh).
 
 ---
 
