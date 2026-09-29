@@ -8,6 +8,7 @@ Every formula below uses the control and column names from the current app expor
 | 1 | SCHEDULED JOBS list, SUBMISSIONS column changes | SharePoint |
 | 2 | Import script | Excel for the web (Office Scripts) |
 | 3 | Import flow | Power Automate |
+| 3A | Office hand-off: fill in the sheet, click Send | Excel (desktop) |
 | 4 | Restore pay splits and fix the pay math | Power Apps (scrJobInfo, scrPayItems, scrTimeCardDetail) |
 | 5 | Builder as text | Power Apps and existing flows |
 | 6 | Job picker and prefill | Power Apps |
@@ -65,25 +66,29 @@ SUBMISSIONS also contains **Import Status**, **Source File**, **Import Key** and
 **Assigned/Claimed by Email** columns that nothing in the app uses. They look like an earlier
 import idea. Leave them alone; this plan doesn't use them.
 
-### 1.3 Import folder
+### 1.3 Import folders
 
-In the site's **Documents** library, create two folders side by side (not one inside the other):
-**Cover Sheet Import** (the office saves here) and **Cover Sheet Imported** (the flow moves
-processed files here).
+In the site's **Documents** library, inside **General**, create two folders side by side:
+**Cover Sheet Import** (cover sheets arrive here) and **Cover Sheet Imported** (the flow keeps a
+copy of every processed sheet here).
+
+The Production office person needs **Edit** access to **Cover Sheet Import**.
 
 ---
 
 ## Phase 2 — Office Script
 
 1. Open any workbook in Excel for the web → **Automate** → **New Script**.
-2. Replace the contents with `office-scripts/Import Finish Cover Sheet.ts` from this repo.
-3. Name it **Import Finish Cover Sheet** and save it. It saves to the OneDrive of whoever will own
-   the flow, so do this signed in as that account.
+2. Replace the contents with `office-scripts/Import Finish Cover Sheet.ts` from this repo. Open the
+   file in Notepad (not Word), copy all, and paste into an **empty** editor. It should be about
+   169 lines ending in a single `}`.
+3. Name it **Import Finish Cover Sheet** and save it. It saves to the OneDrive of whoever owns the
+   flow, so do this signed in as that account.
 
 What it does:
 - Reads the **FINISHCOVER** table by header name, so reordering columns doesn't break it.
-- Reads the job date from **B4** and rejects invalid dates. The template you sent contains
-  `9/25/25026`, which this catches.
+- Reads the job date from **B4** and rejects invalid dates (such as the `9/25/25026` typo in the
+  original template).
 - Skips unused rows, collapses wrapped text, and adds the **N** prefix when it's missing (the same
   rule as the app).
 - Treats `Not found` or `#REF!` from the Production Schedule lookups as blank and returns a warning
@@ -91,44 +96,44 @@ What it does:
 - If a job number appears twice, imports the first row and warns about the second.
 - Ignores all four comment columns.
 
-Template change: select **B4** → Data → Data Validation → Allow **Date**, between 1/1/2025 and
-12/31/2030. This stops the date typo at the source.
-
 About the P: drive: Supervisor, Builder, Subdivision and Lot # are XLOOKUPs into the Production
-Schedule on the P: drive. The cloud flow can't reach P:, so the script reads the values Excel
-saved into the file. The office should keep filling the sheet in **desktop Excel** (where the
-lookups calculate) and then save it into the import folder.
+Schedule on the P: drive. The cloud can't reach P:, so the sheet must be filled in **desktop
+Excel**. The Send button (Phase 3A) replaces those lookups with their values before sending.
 
 ---
 
-## Phase 3 — Power Automate import flow
+## Phase 3 — Power Automate import flow (as built and tested)
 
-Create an **Automated cloud flow** named **Import Finish Cover Sheet**.
+Automated cloud flow **Finish Crew Cover Sheet Import**. Final order:
+
+```
+Trigger → Delay → Copy file → Run script ─┬→ Apply to each → Delete file → Success email
+                                          └→ Error email (Run script has failed)
+```
 
 1. **Trigger:** SharePoint → *When a file is created (properties only)*
-   - Site Address: IndyWarrantyTracking-NRG365
-   - Library Name: Documents
-   - Folder: `/Shared Documents/Cover Sheet Import`
-   - Trigger condition (Settings → Trigger conditions), so only Excel files start the flow:
+   - Site Address: IndyWarrantyTracking-NRG365, Library Name: Documents
+   - Folder: **General › Cover Sheet Import** (use the folder picker)
+   - Trigger condition (Settings → Trigger conditions):
      `@endsWith(toLower(triggerOutputs()?['body/{FilenameWithExtension}']), '.xlsx')`
-   - The trigger supplies the file **Identifier** and the creator's email
-     (`triggerOutputs()?['body/Author/Email']`) used below.
-2. **Run script** (Excel Online (Business))
+   - Only a **new** file starts the flow. Renaming or overwriting an existing file does not.
+2. **Delay:** 1 minute. Gives SharePoint time to finish saving the upload.
+3. **Copy file** (SharePoint)
+   - File to Copy: **fx** `triggerBody()?['{Identifier}']` (Identifier, **not** ID)
+   - Destination Folder: **General › Cover Sheet Imported**
+   - If another file is already there: **Copy with a new name**
+4. **Run script** (Excel Online (Business)), on the **copy**, so the original is never opened
+   and never locked:
    - Location: the SharePoint site, Document Library: Documents
-   - File: the trigger's **Identifier**
+   - File: **fx** `outputs('Copy_file')?['body/Id']`
    - Script: **Import Finish Cover Sheet**
-3. **Apply to each** over `outputs('Run_script')?['body/result/rows']`
-   1. **Get items** (SCHEDULED JOBS)
-      - Filter Query: type `ImportKey eq '` then click **fx** and insert the expression
-        `items('Apply_to_each')?['importKey']`, then type a closing `'`. The box should read
-        `ImportKey eq '` [fx items(...)] `'`. Don't paste `@{...}` into the box; the new designer
-        rejects it as an invalid expression.
-      - Top Count: `1`
-   2. **Condition** (directly under Get items, still inside Apply to each). **One row only:**
-      left side **fx** `length(outputs('Get_items')?['body/value'])`, *is equal to*, right side `0`.
-      - **If yes → Create item** (SCHEDULED JOBS):
+5. **Apply to each** over `outputs('Run_script')?['body/result/rows']`
+   1. **Get items** (SCHEDULED JOBS). Filter Query, as **one fx expression**:
+      `concat('ImportKey eq ''', items('Apply_to_each')?['importKey'], '''')`. Top Count: `1`.
+   2. **Condition**, one row: **fx** `length(outputs('Get_items')?['body/value'])` *is equal to* `0`
+      - **True → Create item** (SCHEDULED JOBS):
 
-        | Field | Value |
+        | Field | Value (all **fx**) |
         |---|---|
         | Job Number (Title) | `items('Apply_to_each')?['jobNumber']` |
         | JobDate | `outputs('Run_script')?['body/result/jobDate']` |
@@ -139,44 +144,102 @@ Create an **Automated cloud flow** named **Import Finish Cover Sheet**.
         | Subdivision | `items('Apply_to_each')?['subdivision']` |
         | LotNumber | `items('Apply_to_each')?['lot']` |
         | Phase | `items('Apply_to_each')?['phase']` |
-        | JobStatus | `Open` |
+        | JobStatus | `Open` (typed) |
         | ImportKey | `items('Apply_to_each')?['importKey']` |
 
-      - **If no → Condition:** `first(outputs('Get_items')?['body/value'])?['JobStatus']` *is equal
-        to* `Open`
-        - **If yes → Update item**. Id: `first(outputs('Get_items')?['body/value'])?['ID']`, with
-          the same fields. A corrected re-save updates jobs nobody has submitted yet.
-        - **If no →** do nothing. Submitted jobs are never overwritten.
+      - **False → Condition 1**, one row: **fx**
+        `first(outputs('Get_items')?['body/value'])?['JobStatus']` *is equal to* `Open` (typed)
+        - **True → Update item**. Id: **fx** `first(outputs('Get_items')?['body/value'])?['ID']`,
+          same fields as above.
+        - **False →** nothing. Submitted jobs are never overwritten.
 
-   **Designer tip:** enter every value in steps 3.1–3.2 with **fx** expressions, as shown. If you
-   pick a Get items field from the dynamic-content list instead, the designer silently wraps the
-   step in an extra **For each**. That makes the loop run once per matching item, which is zero
-   times for a new job, so nothing is ever created.
-4. **Move file** (SharePoint). File to Move: the trigger's **Identifier**, Destination Folder:
-   `/Shared Documents/Cover Sheet Imported`, If another file is already there: **Replace**.
-   This keeps the import folder empty.
-5. **Send an email (V2)**, placed below Apply to each. Enter each value with **fx** (don't paste
-   `@{...}` text):
-   - **To:** click in the box → **fx** → `triggerOutputs()?['body/Author/Email']` → **Add**.
-     This is the email of whoever saved the cover sheet. The designer calls it *Created By Email*,
-     and it's often hidden under **See more** in the trigger's dynamic content.
-   - **Subject:** type `Cover Sheet imported – ` then **fx** `outputs('Run_script')?['body/result/jobDate']`
-   - **Body:** **fx** `length(outputs('Run_script')?['body/result/rows'])`, then type
-     ` jobs imported.`, press Enter, then **fx**
-     `join(outputs('Run_script')?['body/result/warnings'], '<br>')`
-6. **Error email.** On the arrow between **Run script** and **Apply to each**, click **+** → **Add a
-   parallel branch** → **Send an email (V2)**. Then on that email's **Settings** tab → **Run
-   after**, expand **Run script**, uncheck **Is successful** and check **Has failed**.
+   **Designer rule:** inside this loop, enter every value with **fx**. Picking Get items fields
+   from the dynamic-content list makes the designer add a hidden **For each**, and nothing gets
+   created.
+6. **Delete file** (SharePoint), **below** Apply to each (not inside it). File Identifier:
+   **fx** `triggerBody()?['{Identifier}']`. Removes the original, so Cover Sheet Import stays
+   empty.
+7. **Success email** (Send an email (V2)), below Delete file. **Run after → Delete file:** Is
+   successful **and** Has failed.
+   - **To:** **fx** `triggerOutputs()?['body/Author/Email']` (the person who sent the sheet)
+   - **Subject:** `Cover Sheet imported – ` + **fx** `outputs('Run_script')?['body/result/jobDate']`
+   - **Body:** **fx** `length(outputs('Run_script')?['body/result/rows'])`, ` jobs imported.`,
+     Enter, **fx** `join(outputs('Run_script')?['body/result/warnings'], '<br>')`
+
+   If any job fails inside the loop, Delete file and this email are both skipped. So "imported"
+   is only sent when every job was saved.
+8. **Error email**, on a parallel branch after Run script. **Run after → Run script:** Has
+   failed only.
    - **To:** **fx** `triggerOutputs()?['body/Author/Email']`
    - **Subject:** `Cover Sheet NOT imported`
-   - **Body:** type `The cover sheet could not be imported: ` then **fx**
+   - **Body:** `The cover sheet could not be imported: ` + **fx**
      `coalesce(outputs('Run_script')?['body/error/message'], outputs('Run_script')?['body/message'], 'See the flow run history for details.')`
 
-   The sender then learns about a bad date or the wrong template right away.
+---
 
-**Test:** save the sample cover sheet into the folder. With the B4 typo you should get the error
-email. Fix B4, save again, and the two jobs appear in SCHEDULED JOBS. Save a third time and there
-are still only two.
+## Phase 3A — Office hand-off: fill in the sheet, click Send
+
+The Production office person's whole job each day:
+
+1. Open **FINISH COVER SHEET – DAILY ENTRY.xlsm** in desktop Excel.
+2. Enter the job date in B4, then the Job Numbers, Lead, Helper and Phase. The Production
+   Schedule lookups fill in the rest.
+3. Click **Send to Finish Crew App**.
+
+The button (macro `excel-macros/SendToFinishCrewApp.bas`) does the following:
+- Refreshes the P: drive lookups.
+- Checks that B4 is a real date and at least one job is entered.
+- Warns about any "Not found" lookups.
+- Saves a values-only `.xlsx` copy straight into **Cover Sheet Import**, named like
+  `Finish Cover 2026-09-30 sent 2026-09-29 161502.xlsx`.
+
+The flow does the rest, and the sender gets the "imported" email a few minutes later.
+
+**Corrections:** fix the sheet and click **Send** again. Each click creates a new uniquely named
+file, so the flow always starts. Jobs still Open are updated and submitted jobs are left alone.
+
+### Setup (one time)
+
+1. **Make the entry workbook.** Open the current cover sheet template in desktop Excel → **File →
+   Save As** → type **Excel Macro-Enabled Workbook (*.xlsm)** → name it
+   `FINISH COVER SHEET – DAILY ENTRY.xlsm`. Save it where the office person works (their desktop
+   or a P: drive folder).
+   *Keep the original **MASTER FINISH COVER SHEET TEMPLATE.xlsx** unchanged. The daily Cover
+   Sheet report flow copies that file, and it must stay .xlsx.*
+2. **Add the macro.** Press **Alt+F11** → **File → Import File…** → choose
+   `SendToFinishCrewApp.bas` → close the VBA window.
+3. **Add the button.** If there's no **Developer** tab: File → Options → Customize Ribbon →
+   check **Developer**. Then **Developer → Insert → Button (Form Control)**, draw it near the top
+   of the sheet (for example beside B4), pick **SendToFinishCrewApp** when asked, and change its
+   text to **Send to Finish Crew App**.
+4. **Add date validation to B4:** Data → Data Validation → Allow **Date**, between 1/1/2025 and
+   12/31/2030.
+5. **Save** the .xlsm.
+6. **Macro security.** If Excel shows a yellow **Enable Content** bar, click it. If macros are
+   blocked by policy, ask IT to add the entry workbook's folder as a **Trusted Location**.
+7. **Test:** enter a date and one job, click **Send**. The file appears in Cover Sheet Import, then
+   moves to Cover Sheet Imported within a few minutes, the job shows in SCHEDULED JOBS, and the
+   "imported" email arrives.
+
+The office person must be signed in to Excel with their Airtron account. The macro saves directly
+to the SharePoint web address, so no OneDrive sync is needed.
+
+### If the macro can't save to SharePoint
+
+Some setups block saving to a web address from a macro. Use the synced folder instead:
+
+1. In SharePoint, open **General › Cover Sheet Import** → **Sync** (or **Add shortcut to My
+   files**). The folder then appears in File Explorer.
+2. In File Explorer, right-click the folder → copy its path, for example
+   `C:\Users\<name>\Airtron\IndyWarrantyTracking-NRG365 - Documents\General\Cover Sheet Import\`.
+3. In the macro, replace the `IMPORT_FOLDER` web address with that path (keep the trailing `\`).
+
+### No-macro alternative
+
+If macros aren't allowed at all: after filling in the sheet, **File → Save a Copy** (or Save
+As) into the synced **Cover Sheet Import** folder with a new name that includes the date, then
+**close** the workbook. It's two more clicks than the button, and the office person has to
+remember to use a new name each time.
 
 ---
 
