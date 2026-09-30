@@ -1,6 +1,6 @@
 # Finish Crew Timecard — Cover Sheet Prefill & Pay Math Build Plan
 
-*Last updated 2026-09-29. Reflects the import flow, Send macro and app changes as built and
+*Last updated 2026-09-30. Reflects the import flow, Send macro and app changes as built and
 tested.*
 
 Files in this repository:
@@ -1265,6 +1265,65 @@ Navigate(scrOpenSubmissions, ScreenTransition.Fade)
 The scrPayItems back arrow (to scrJobInfo) and the scrSelectJob back arrow (to scrHome) stay as
 they are.
 
+### 6.8 Open Submissions: remember the search while reviewing
+
+Supervisors filter Open Submissions by job number or Lead Installer, open a card, approve it, and
+come back. The search is kept while they go back and forth, and cleared automatically when the
+review is done.
+
+| What happens | Search |
+|---|---|
+| Open a card, come back (Back or after approving) | **Kept** |
+| Approve the **last** card that matches the search | **Cleared** |
+| Back to Home, or open Open Submissions from Home or another screen | **Cleared** |
+| Tap the ✕ beside the search box | **Cleared** |
+
+**App.OnStart**: add at the end: `Set(varOpenSearch, "");`
+
+**scrOpenSubmissions → txtSearchJobNumber**
+
+| Property | Value |
+|---|---|
+| Default | `varOpenSearch` |
+| OnChange | `Set(varOpenSearch, Self.Text)` |
+| DelayOutput | `true` |
+
+The gallery's Items formula doesn't change.
+
+**Clear (✕) icon** (Icon.Cancel) at the right end of the search box.
+Visible: `!IsBlank(txtSearchJobNumber.Text)`. OnSelect:
+```
+Set(varOpenSearch, "");
+Reset(txtSearchJobNumber)
+```
+
+**Add `Set(varOpenSearch, "");` as the first line of OnSelect** on:
+- scrOpenSubmissions → back arrow to Home (`ArrowBackHome_2`)
+- scrHome → My Open Submissions (`btnMySubmission`)
+- the Open Submissions buttons on scrSelectJob, scrJobInfo and scrPayItems (6.7)
+
+Leave scrTimeCardDetail's **[Back]** button unchanged so the search survives.
+
+**scrTimeCardDetail → btnApproved**: insert after the `SendEmailV2(...);` block and before
+`Set(varSelectedSubmission, Blank());`:
+```
+If(
+    varOpenSearch <> "" &&
+    IsBlank(
+        LookUp(
+            SUBMISSIONS,
+            ID <> varSelectedSubmission.ID &&
+            Status.Value <> "Approved" &&
+            (
+                StartsWith('Job Number', varOpenSearch) ||
+                StartsWith('Lead Installer', varOpenSearch)
+            )
+        )
+    ),
+    Set(varOpenSearch, "")
+);
+```
+
 ---
 
 ## Phase 7 — Testing
@@ -1322,6 +1381,10 @@ live labels), and on scrTimeCardDetail and the approval email (saved values).
 - [ ] Any forward arrow into scrJobInfo → blank form, no leftover data or pay split.
 - [ ] scrPayItems (new card) → Open Submissions → warning shows; the incomplete card is listed and can be edited or deleted.
 - [ ] Leave scrSelectJob, send a new cover sheet, come back → new jobs appear (OnVisible refresh).
+- [ ] Open Submissions: search a lead with 3 cards → approve one → list still filtered (2 left).
+- [ ] Approve the remaining matches → search clears and the full list shows.
+- [ ] Search → open a card → [Back] → filter kept; back arrow to Home → reopen → unfiltered.
+- [ ] ✕ clears the search.
 
 ---
 
