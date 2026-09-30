@@ -6,6 +6,7 @@ tested.*
 Files in this repository:
 - `docs/build-plan.md`: this plan
 - `office-scripts/Import Finish Cover Sheet.ts`: Office Script used by the import flow
+- `office-scripts/Populate Finish Crew Cover Sheet.ts`: Office Script for the daily Cover Sheet report
 - `excel-macros/SendToFinishCrewApp.bas`: "Send to Finish Crew App" button for the daily-entry
   workbook
 
@@ -18,6 +19,7 @@ Every formula below uses the control and column names from the current app expor
 | 2 | Import script | Excel for the web (Office Scripts) |
 | 3 | Import flow | Power Automate |
 | 3A | Office hand-off: fill in the sheet, click Send | Excel (desktop) |
+| 3B | Daily Cover Sheet report script (one row per job) | Office Scripts |
 | 4 | Restore pay splits and fix the pay math | Power Apps (scrJobInfo, scrPayItems, scrTimeCardDetail) |
 | 5 | Builder as text | Power Apps and existing flows |
 | 6 | Job picker, prefill, lead-only job list and navigation | Power Apps |
@@ -249,6 +251,40 @@ If macros aren't allowed at all: after filling in the sheet, **File → Save a C
 As) into the synced **Cover Sheet Import** folder with a new name that includes the date, then
 **close** the workbook. It's two more clicks than the button, and the office person has to
 remember to use a new name each time.
+
+---
+
+## Phase 3B — Daily Finish Crew Cover Sheet report (new one-row-per-job format)
+
+The report template is now **FINISH COVER SHEET MASTER.xlsx**, the same layout the office fills
+in: sheet **MASTER COVER**, job date in **B4**, table **FINISHCOVER** (header row 6) with one row
+per job:
+
+Job Number | Supervisor | Lead Installer | Helper Installer | Builder | Subdivision | Lot # |
+Phase | General Comments | Builder Comments | Field Super Comments | FQI Comments
+
+Script: `office-scripts/Populate Finish Crew Cover Sheet.ts`. Paste it over the old
+**POPULATE FINISH CREW COVER SHEET** script (Notepad → Ctrl+A, Ctrl+C → empty editor → Ctrl+V →
+Save). It keeps the same parameters (`recordsJson`, `reportDate`), so the flow's Run script step
+needs no changes. Point the flow's "copy template" step at the new master file.
+
+What it does:
+- Writes the job date into B4 as a real date (keeps the cell's date format).
+- Clears the table body, including the template's P: drive XLOOKUP formulas, and writes one row
+  per submission from the app.
+- Builder uses **BuilderName**, falling back to the old Builder lookup for older cards. General
+  Comments uses the **SupervisorComments** internal column.
+- Job Number and Lot # are written as text ("9B", "0110" stay exact).
+- Wraps text, fits row heights, sets the print area to the filled rows, and repeats row 6 on
+  every printed page.
+- Grows the table if a day ever has more than 94 jobs.
+
+Street Address and Zip Code are no longer on the report.
+
+Optional clean-up: the master still carries the external link to the P: drive Production
+Schedule. It does no harm, but desktop Excel may ask about updating links. To remove it, open the
+master in desktop Excel → **Data → Edit Links → Break Link** → save. Only do this on the report
+master, not on the office's daily-entry workbook, which needs the lookups.
 
 ---
 
