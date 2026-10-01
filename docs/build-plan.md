@@ -23,8 +23,9 @@ Every formula below uses the control and column names from the current app expor
 | 3B | Daily Cover Sheet report script (one row per job) | Office Scripts |
 | 4 | Restore pay splits and fix the pay math | Power Apps (scrJobInfo, scrPayItems, scrTimeCardDetail) |
 | 5 | Builder as text | Power Apps and existing flows |
-| 6 | Job picker, prefill, lead-only job list and navigation | Power Apps |
+| 6 | Job picker, prefill, lead-only job list, navigation, delete scheduled job | Power Apps |
 | 7 | Test | — |
+| 8 | Field Supervisor Punch List (list view in Teams) | SharePoint |
 
 Phase 4 fixes the current app, so do it (and test it) before the prefill work in Phase 6.
 The "why the math is wrong" details are in the appendix.
@@ -1374,6 +1375,73 @@ If(
 );
 ```
 
+### 6.9 scrSelectJob: delete a scheduled job (single confirmation)
+
+A trash icon on each job row, then one "Are you sure?" pop-up. The job is **marked Deleted**
+(JobStatus = "Deleted") rather than erased. It disappears from the picker just the same, but if
+the office re-sends a cover sheet that still lists it, the import flow sees a job that isn't
+**Open** and leaves it alone instead of re-creating it.
+
+**1. Trash icon in the gallery row.** Select galSchedJobs' first row → Insert → Icons → **Trash**.
+Name it `icoDeleteSchedJob` and place it at the right end of the row.
+
+| Property | Value |
+|---|---|
+| OnSelect | `Set(varSchedJobToDelete, ThisItem); Set(varShowSchedDelete, true)` |
+| Visible | `varSupervisor` (only supervisors can delete; use `true` to allow everyone) |
+| Color | `RGBA(192, 0, 0, 1)` |
+| Tooltip | `"Delete this scheduled job"` |
+
+The icon's OnSelect must **not** be `Select(Parent)`, or tapping it would also open the job.
+
+**2. Confirmation pop-up.** On scrSelectJob (outside the gallery): Insert → **Container**, named
+`conSchedDeleteConfirm`. Size it to the whole screen (X 0, Y 0, Width `Parent.Width`, Height
+`Parent.Height`). **Visible:** `varShowSchedDelete`. Inside it add:
+
+- **Rectangle** (full screen), Fill `RGBA(0, 0, 0, 0.5)`, so the screen behind is dimmed and
+  can't be tapped.
+- **Rectangle** (the white box, centered), Fill `White`, BorderColor `RGBA(56, 96, 178, 1)`.
+- **Label** `lblSchedDeleteMsg` inside the box. **Text:**
+  ```
+  "Delete this scheduled job?" & Char(10) & Char(10) &
+  varSchedJobToDelete.Title & "   Lot " & varSchedJobToDelete.LotNumber &
+  "   " & Text(varSchedJobToDelete.JobDate, "m/d") & Char(10) &
+  varSchedJobToDelete.Builder & " – " & varSchedJobToDelete.Subdivision & Char(10) & Char(10) &
+  "It will be removed from the Scheduled Jobs list."
+  ```
+- **Button** `btnSchedDeleteNo`, Text `"No"`. **OnSelect:**
+  ```
+  Set(varShowSchedDelete, false);
+  Set(varSchedJobToDelete, Blank())
+  ```
+- **Button** `btnSchedDeleteYes`, Text `"Yes, Delete"`, Fill `RGBA(192, 0, 0, 1)`. **OnSelect:**
+  ```
+  Patch(
+      'SCHEDULED JOBS',
+      LookUp('SCHEDULED JOBS', ID = varSchedJobToDelete.ID),
+      { JobStatus: "Deleted" }
+  );
+
+  Set(varShowSchedDelete, false);
+  Set(varSchedJobToDelete, Blank());
+
+  Refresh('SCHEDULED JOBS');
+
+  Notify("Scheduled job deleted.", NotificationType.Success)
+  ```
+
+**3. App.OnStart**: add at the end: `Set(varShowSchedDelete, false);`
+
+No other changes are needed. galSchedJobs only shows `JobStatus = "Open"`, so the job drops off
+the list right away. To bring one back, open SCHEDULED JOBS in SharePoint and change its JobStatus
+back to `Open`.
+
+*To erase the record instead (not recommended, because a re-sent cover sheet would re-create the
+job), replace the Patch with:*
+`Remove('SCHEDULED JOBS', LookUp('SCHEDULED JOBS', ID = varSchedJobToDelete.ID));`
+
+Users who delete need **Edit** access to the SCHEDULED JOBS list.
+
 ---
 
 ## Phase 7 — Testing
@@ -1435,6 +1503,151 @@ live labels), and on scrTimeCardDetail and the approval email (saved values).
 - [ ] Approve the remaining matches → search clears and the full list shows.
 - [ ] Search → open a card → [Back] → filter kept; back arrow to Home → reopen → unfiltered.
 - [ ] ✕ clears the search.
+- [ ] scrSelectJob: trash icon (supervisor) → pop-up → **No** leaves the job; **Yes, Delete** removes it from the list.
+- [ ] Re-send a cover sheet containing a deleted job → it does **not** reappear (JobStatus stays Deleted).
+
+---
+
+## Phase 8 — Field Supervisor Punch List (SharePoint list view in Teams)
+
+About six field supervisors follow up on **Field Supervisor Comments**. Instead of an Excel
+workbook, they use a **view of the SUBMISSIONS list**, pinned as a Teams tab. It is web-only, always
+current, and needs no refresh. The "Complete" status is saved on the job itself, so it can't get
+out of step with the data.
+
+- Comments with work still to do are shaded **yellow**.
+- One click on the checkbox marks the item **Complete**, and the comment turns **red**. Clicking
+  again undoes it.
+- Each supervisor has a view showing only their own jobs.
+
+(A Power Query workbook was tried first. It was dropped because refreshing a SharePoint list query
+needs desktop Excel, and cells typed next to a query table don't stay with their rows after a
+refresh.)
+
+### 8.1 Columns in SUBMISSIONS
+
+| Column (internal name) | Type | Purpose |
+|---|---|---|
+| Field Supervisor Comments Complete (`FieldSupervisorCommentsComplete`) | Yes/No, default No | The supervisor's checkbox; drives yellow/red |
+| HasFieldSuperComment | Yes/No, default No | "This job has a field super comment." Used only to filter views, because SharePoint can't filter on a multi-line comments column |
+
+### 8.2 App: set the HasFieldSuperComment flag
+
+In **frmSubmission**: **Edit fields → Add field → HasFieldSuperComment**. On that card:
+- **Visible:** `false`
+- **Update:** `!IsBlank(Trim(DataCardValue16.Text))` (DataCardValue16 is the Field Supervisor
+  Comments box)
+
+It saves automatically on new and edited time cards. For rows submitted before this change, set
+the flag to **Yes** in **Edit in grid view** on rows that have comments.
+
+### 8.3 Views
+
+1. SUBMISSIONS → **+ Add view** → List → `Field Super Punch List`.
+2. **Edit current view**:
+   - **Columns:** Job Number, Job Date, Supervisor, Builder Name, Builder (old cards), Subdivision,
+     Lot Number, Field Supervisor Comments, Field Supervisor Comments Complete
+   - **Filter:** `HasFieldSuperComment` is equal to `Yes`
+   - **Sort:** Field Supervisor Comments Complete ascending (open first), then Job Date descending
+3. **One view per supervisor:** from the Field Super Punch List view → **Save view as**
+   `Punch List – ROSE02` → **Edit current view** → Filter:
+   ```
+   Show the items when column  [HasFieldSuperComment]  [is equal to]  [Yes]
+     (•) And
+   When column                 [Supervisor]            [is equal to]  [ROSE02]
+   ```
+   Repeat for each supervisor code (ESCU00, GIBS03, …), always starting from the Field Super Punch
+   List view.
+   - Don't filter on **Field Supervisor Comments Complete = Yes**. That shows only finished items,
+     so a new list looks empty.
+   - Optional open-items-only view: add **And Field Supervisor Comments Complete is equal to No**.
+
+Views make the lists easier to work through but don't restrict access; any supervisor can switch
+views.
+
+### 8.4 Comment colors (Field Supervisor Comments column)
+
+Column header → **Column settings → Format this column → Advanced mode**:
+```json
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/sp/v2/column-formatting.schema.json",
+  "elmType": "div",
+  "txtContent": "@currentField",
+  "style": {
+    "background-color": "=if(@currentField == '', '', if([$FieldSupervisorCommentsComplete] == true, '#FF9999', '#FFFF99'))",
+    "white-space": "pre-wrap",
+    "padding": "4px",
+    "width": "100%",
+    "box-sizing": "border-box"
+  }
+}
+```
+Yellow `#FFFF99` = open, red `#FF9999` = complete, no color when there's no comment. If HTML tags
+appear, set the column to **Plain text**.
+
+### 8.5 One-click checkbox (Field Supervisor Comments Complete column)
+
+A Yes/No column normally shows a checkbox only in grid-edit mode, and rows created before the
+column existed show blank. This formatting draws a clickable checkbox on every row:
+```json
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/sp/v2/column-formatting.schema.json",
+  "elmType": "div",
+  "style": {
+    "display": "flex",
+    "align-items": "center",
+    "justify-content": "center",
+    "cursor": "pointer",
+    "width": "100%",
+    "height": "100%"
+  },
+  "attributes": {
+    "title": "=if(@currentField == true, 'Complete - click to undo', 'Click to mark complete')"
+  },
+  "customRowAction": {
+    "action": "setValue",
+    "actionInput": {
+      "FieldSupervisorCommentsComplete": "=if(@currentField == true, 'false', 'true')"
+    }
+  },
+  "children": [
+    {
+      "elmType": "span",
+      "attributes": {
+        "iconName": "=if(@currentField == true, 'CheckboxComposite', 'Checkbox')"
+      },
+      "style": {
+        "font-size": "22px",
+        "color": "=if(@currentField == true, '#C00000', '#605E5C')"
+      }
+    },
+    {
+      "elmType": "span",
+      "txtContent": "=if(@currentField == true, 'Complete', '')",
+      "style": {
+        "padding-left": "6px",
+        "color": "#C00000",
+        "font-weight": "600"
+      }
+    }
+  ]
+}
+```
+- Not done: grey empty box; the comment is yellow. Done: red ticked box + "Complete"; the comment
+  is red.
+- Supervisors need **Edit** access to SUBMISSIONS. Ask them to change only the checkbox.
+
+### 8.6 Teams tab
+
+Channel → **+** → **Lists** (or SharePoint) → **Add an existing list** → **SUBMISSIONS** → open the
+Field Super Punch List view → name the tab `Field Super Punch List`.
+
+### 8.7 Tests
+- [ ] A new time card with a Field Supervisor comment shows in the punch list (flag set to Yes), shaded yellow.
+- [ ] A time card without one does not appear.
+- [ ] Clicking the checkbox ticks it and turns the comment red; clicking again turns it back to yellow.
+- [ ] Each supervisor's view shows only their code's jobs.
+- [ ] Everything works from the Teams tab in the browser and the Teams app, with no desktop Excel.
 
 ---
 
