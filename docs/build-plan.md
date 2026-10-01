@@ -1,6 +1,6 @@
 # Finish Crew Timecard — Cover Sheet Prefill & Pay Math Build Plan
 
-*Last updated 2026-10-01. Reflects the import flow, Send macro and app changes as built and
+*Last updated 2026-10-02. Reflects the import flow, Send macro and app changes as built and
 tested.*
 
 Files in this repository:
@@ -1127,10 +1127,11 @@ With(
             StartsWith(LeadInstaller, txtSearchSchedJob.Text)
         ),
         JobDate,
-        SortOrder.Descending
+        SortOrder.Ascending
     )
 )
 ```
+- Sorted **oldest to newest** by job date.
 - To let **helpers** see their jobs too, change the last filter line to
   `LeadInstaller = varMyName || HelperInstaller = varMyName`.
 - If a crew is swapped, the new lead won't see the job. A supervisor can, or the lead uses **Job
@@ -1330,6 +1331,11 @@ review is done.
 | Tap the ✕ beside the search box | **Cleared** |
 
 **App.OnStart**: add at the end: `Set(varOpenSearch, "");`
+
+**Sort order:** the Open Submissions gallery sorts **oldest to newest by Job Date**. In its
+Items formula, the final two Sort arguments are `'Job Date', SortOrder.Ascending` (previously
+`ID, SortOrder.Descending`). Use `ID` instead of `'Job Date'` to sort by when the card was
+submitted.
 
 **scrOpenSubmissions → txtSearchJobNumber**
 
