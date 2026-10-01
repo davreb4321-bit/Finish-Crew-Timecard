@@ -242,7 +242,8 @@ Macro `excel-macros/ClearCoverSheet.bas` resets the daily-entry workbook after t
 sent. Import it the same way (Alt+F11 → File → Import File, or paste into a new module) and add a
 second button, **Clear Sheet**, assigned to **ClearCoverSheet**.
 
-It asks for confirmation, then:
+It shows two warnings (job date and job count, then a final "cannot be undone"; **No** is the
+default button on both), then:
 - clears typed entries (Job Number, Lead, Helper, Phase, the four comment columns) and B4
 - keeps the P: drive lookup formulas in Supervisor, Builder, Subdivision and Lot #, and puts back
   any formula someone typed over

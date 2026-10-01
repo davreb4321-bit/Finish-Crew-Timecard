@@ -29,9 +29,31 @@ Public Sub ClearCoverSheet()
         Exit Sub
     End If
 
-    If MsgBox("Clear all jobs and the Job Date from the cover sheet?" & vbCrLf & vbCrLf & _
-              "Make sure today's sheet has already been sent.", _
-              vbYesNo + vbQuestion, "Clear Cover Sheet") = vbNo Then
+    ' ---- Two-step warning (No is the default button, so pressing Enter cancels) ----
+    Dim jobCount As Long
+    Dim dateText As String
+
+    If Not lo.DataBodyRange Is Nothing Then
+        jobCount = Application.WorksheetFunction.CountA(lo.ListColumns("Job Number").DataBodyRange)
+    End If
+    dateText = ws.Range(DATE_CELL).Text
+    If Trim(dateText) = "" Then dateText = "(no date entered)"
+
+    If MsgBox("CAUTION: You are about to clear the Finish Crew Cover Sheet." & vbCrLf & vbCrLf & _
+              "Job Date:  " & dateText & vbCrLf & _
+              "Jobs entered:  " & jobCount & vbCrLf & vbCrLf & _
+              "All jobs, installers, phases, comments and the Job Date will be erased." & vbCrLf & _
+              "Make sure this sheet has already been sent with Send to Teams." & vbCrLf & vbCrLf & _
+              "Do you want to continue?", _
+              vbYesNo + vbExclamation + vbDefaultButton2, "Clear Cover Sheet - Warning") <> vbYes Then
+        Exit Sub
+    End If
+
+    If MsgBox("FINAL WARNING" & vbCrLf & vbCrLf & _
+              "This cannot be undone. Ctrl+Z will NOT bring the jobs back." & vbCrLf & vbCrLf & _
+              "Clear the cover sheet now?", _
+              vbYesNo + vbCritical + vbDefaultButton2, "Clear Cover Sheet - Final Warning") <> vbYes Then
+        MsgBox "Nothing was cleared.", vbInformation, "Clear Cover Sheet"
         Exit Sub
     End If
 
