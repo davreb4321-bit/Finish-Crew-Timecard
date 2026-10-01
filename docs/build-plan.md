@@ -1,12 +1,13 @@
 # Finish Crew Timecard — Cover Sheet Prefill & Pay Math Build Plan
 
-*Last updated 2026-09-30. Reflects the import flow, Send macro and app changes as built and
+*Last updated 2026-10-01. Reflects the import flow, Send macro and app changes as built and
 tested.*
 
 Files in this repository:
 - `docs/build-plan.md`: this plan
 - `office-scripts/Import Finish Cover Sheet.ts`: Office Script used by the import flow
 - `office-scripts/Populate Finish Crew Cover Sheet.ts`: Office Script for the daily Cover Sheet report
+- `excel-macros/ClearCoverSheet.bas`: "Clear Sheet" button for the daily-entry workbook
 - `excel-macros/SendToFinishCrewApp.bas`: "Send to Finish Crew App" button for the daily-entry
   workbook
 
@@ -234,6 +235,18 @@ file, so the flow always starts. Jobs still Open are updated and submitted jobs 
 
 The office person must be signed in to Excel with their Airtron account. The macro saves directly
 to the SharePoint web address, so no OneDrive sync is needed.
+
+### Clear button (start the next day)
+
+Macro `excel-macros/ClearCoverSheet.bas` resets the daily-entry workbook after the sheet has been
+sent. Import it the same way (Alt+F11 → File → Import File, or paste into a new module) and add a
+second button, **Clear Sheet**, assigned to **ClearCoverSheet**.
+
+It asks for confirmation, then:
+- clears typed entries (Job Number, Lead, Helper, Phase, the four comment columns) and B4
+- keeps the P: drive lookup formulas in Supervisor, Builder, Subdivision and Lot #, and puts back
+  any formula someone typed over
+- keeps the Lead/Helper drop-down menus, formatting and buttons, and resets row heights
 
 ### If the macro can't save to SharePoint
 
