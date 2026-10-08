@@ -69,7 +69,7 @@ Notes:
 | Column | Type | Why |
 |---|---|---|
 | BuilderName | Single line of text | Replaces the Builder lookup (Phase 5). Display name **Builder Name** |
-| ScheduledJobID | Number, 0 decimals | Links a time card to its scheduled job |
+| ScheduleJobID | Number, 0 decimals | Links a time card to its scheduled job |
 
 The existing **Builder** column is a **Lookup** column, not a Choice column (the app export shows a
 `Builder Id` field). SharePoint can't convert a lookup to text, so add the new text column and leave
@@ -1230,7 +1230,7 @@ If(
     Patch(
         SUBMISSIONS,
         LookUp(SUBMISSIONS, ID = varSubmissionID),
-        { ScheduledJobID: varSchedJob.ID }
+        { ScheduleJobID: varSchedJob.ID }
     );
     Patch(
         'SCHEDULED JOBS',
@@ -1245,10 +1245,10 @@ Set(varSchedJob, Blank());
 In **btnFINALDELETE.OnSelect**, add at the very top (before `RemoveIf('LINE ITEMS', …)`):
 ```
 If(
-    !IsBlank(varDeleteRecord.ScheduledJobID),
+    !IsBlank(varDeleteRecord.ScheduleJobID),
     Patch(
         'SCHEDULED JOBS',
-        LookUp('SCHEDULED JOBS', ID = varDeleteRecord.ScheduledJobID),
+        LookUp('SCHEDULED JOBS', ID = varDeleteRecord.ScheduleJobID),
         { JobStatus: "Open", SubmissionID: Blank() }
     )
 );
@@ -1493,7 +1493,7 @@ live labels), and on scrTimeCardDetail and the approval email (saved values).
 - [ ] User not on the email list → empty-list message tells them to see a supervisor / use Job Not Listed.
 - [ ] Pick a job → all eight fields plus the date prefill; schedule fields are locked; % and rates load.
 - [ ] Swap the helper → split reloads for the new pair.
-- [ ] Submit → the job leaves the picker; SUBMISSIONS.ScheduledJobID and SCHEDULED JOBS.SubmissionID are set.
+- [ ] Submit → the job leaves the picker; SUBMISSIONS.ScheduleJobID and SCHEDULED JOBS.SubmissionID are set.
 - [ ] Job Not Listed → blank form, same as before.
 - [ ] Delete that time card → the job reappears in the picker.
 - [ ] Daily Cover Sheet report → unchanged output.
@@ -1535,44 +1535,43 @@ refresh.)
 
 | Column (internal name) | Type | Purpose |
 |---|---|---|
+| Field Supervisor Comments (`FieldSupervisorComments`) | Single line of text | The comment. Single-line text can be filtered in views (max 255 characters) |
 | Field Supervisor Comments Complete (`FieldSupervisorCommentsComplete`) | Yes/No, default No | The supervisor's checkbox; drives yellow/red |
-| HasFieldSuperComment | Yes/No, default No | "This job has a field super comment." Used only to filter views, because SharePoint can't filter on a multi-line comments column |
 
-### 8.2 App: set the HasFieldSuperComment flag
+No extra flag column or app change is needed. If Field Supervisor Comments is ever changed to
+multi-line text (for comments longer than 255 characters), views can no longer filter on it. You
+would then need a hidden Yes/No `HasFieldSuperComment` column, set by the app with
+`!IsBlank(Trim(DataCardValue16.Text))`, and the views would filter on that instead.
 
-In **frmSubmission**: **Edit fields → Add field → HasFieldSuperComment**. On that card:
-- **Visible:** `false`
-- **Update:** `!IsBlank(Trim(DataCardValue16.Text))` (DataCardValue16 is the Field Supervisor
-  Comments box)
-
-It saves automatically on new and edited time cards. For rows submitted before this change, set
-the flag to **Yes** in **Edit in grid view** on rows that have comments.
-
-### 8.3 Views
+### 8.2 Views
 
 1. SUBMISSIONS → **+ Add view** → List → `Field Super Punch List`.
 2. **Edit current view**:
-   - **Columns:** Job Number, Job Date, Supervisor, Builder Name, Builder (old cards), Subdivision,
+   - **Columns:** Job Number, Job Date, Supervisor, BuilderName, Builder (old cards), Subdivision,
      Lot Number, Field Supervisor Comments, Field Supervisor Comments Complete
-   - **Filter:** `HasFieldSuperComment` is equal to `Yes`
+   - **Filter:** `Field Supervisor Comments` **is not equal to** *(leave the value blank)*, which
+     means "has a comment"
    - **Sort:** Field Supervisor Comments Complete ascending (open first), then Job Date descending
-3. **One view per supervisor:** from the Field Super Punch List view → **Save view as**
+3. **One view per supervisor:** from Field Super Punch List → **Save view as**
    `Punch List – ROSE02` → **Edit current view** → Filter:
    ```
-   Show the items when column  [HasFieldSuperComment]  [is equal to]  [Yes]
+   Show the items when column  [Field Supervisor Comments]  [is not equal to]  [ (blank) ]
      (•) And
-   When column                 [Supervisor]            [is equal to]  [ROSE02]
+   When column                 [Supervisor]                 [is equal to]      [ROSE02]
    ```
-   Repeat for each supervisor code (ESCU00, GIBS03, …), always starting from the Field Super Punch
-   List view.
-   - Don't filter on **Field Supervisor Comments Complete = Yes**. That shows only finished items,
-     so a new list looks empty.
+   Repeat for each supervisor code (ESCU00, GIBS03, …).
+   - Don't filter on **Field Supervisor Comments Complete = Yes**. That shows only finished items.
    - Optional open-items-only view: add **And Field Supervisor Comments Complete is equal to No**.
+4. To hide clutter, make Field Super Punch List the **default view**. A view can't be switched
+   between public and private; to keep All Items for yourself, save a private copy
+   (**Save view as**, untick **Make this a public view**), then delete the public All Items.
+   Check that no flow's Get items uses "Limit Columns by View = All Items" before deleting it.
 
-Views make the lists easier to work through but don't restrict access; any supervisor can switch
-views.
+Views don't restrict access; any supervisor can switch views. For a locked-down tab per
+supervisor, put a **List web part** set to that supervisor's view on a SharePoint page (command bar
+off) and add the page as a Teams tab.
 
-### 8.4 Comment colors (Field Supervisor Comments column)
+### 8.3 Comment colors (Field Supervisor Comments column)
 
 Column header → **Column settings → Format this column → Advanced mode**:
 ```json
@@ -1592,7 +1591,7 @@ Column header → **Column settings → Format this column → Advanced mode**:
 Yellow `#FFFF99` = open, red `#FF9999` = complete, no color when there's no comment. If HTML tags
 appear, set the column to **Plain text**.
 
-### 8.5 One-click checkbox (Field Supervisor Comments Complete column)
+### 8.4 One-click checkbox (Field Supervisor Comments Complete column)
 
 A Yes/No column normally shows a checkbox only in grid-edit mode, and rows created before the
 column existed show blank. This formatting draws a clickable checkbox on every row:
@@ -1644,13 +1643,13 @@ column existed show blank. This formatting draws a clickable checkbox on every r
   is red.
 - Supervisors need **Edit** access to SUBMISSIONS. Ask them to change only the checkbox.
 
-### 8.6 Teams tab
+### 8.5 Teams tab
 
 Channel → **+** → **Lists** (or SharePoint) → **Add an existing list** → **SUBMISSIONS** → open the
 Field Super Punch List view → name the tab `Field Super Punch List`.
 
-### 8.7 Tests
-- [ ] A new time card with a Field Supervisor comment shows in the punch list (flag set to Yes), shaded yellow.
+### 8.6 Tests
+- [ ] A new time card with a Field Supervisor comment shows in the punch list, shaded yellow.
 - [ ] A time card without one does not appear.
 - [ ] Clicking the checkbox ticks it and turns the comment red; clicking again turns it back to yellow.
 - [ ] Each supervisor's view shows only their code's jobs.
@@ -1682,7 +1681,7 @@ submissions found for <date>" before Terminate.
 
 | List | Index |
 |---|---|
-| SUBMISSIONS | Date (Job Date), Status, Created By, Title (Job Number), Supervisor, HasFieldSuperComment |
+| SUBMISSIONS | Date (Job Date), Status, Created By, Title (Job Number), Supervisor, FieldSupervisorComments |
 | LINE ITEMS | Time Card Number |
 | SCHEDULED JOBS | JobDate, JobStatus, ImportKey, LeadInstaller |
 
@@ -1728,7 +1727,7 @@ Scheduled cloud flow, monthly:
    `concat('JobDate lt ''', outputs('Compose_-_SchedCutoff'), '''')`, Top 5000, pagination on →
    Apply to each → Delete item.
 4. Get items (SUBMISSIONS), Filter Query
-   `concat('Date lt ''', outputs('Compose_-_SubmissionsCutoff'), ''' and Status eq ''Approved'' and (HasFieldSuperComment eq 0 or FieldSupervisorCommentsComplete eq 1)')`,
+   `concat('Date lt ''', outputs('Compose_-_SubmissionsCutoff'), ''' and Status eq ''Approved'' and (FieldSupervisorComments eq null or FieldSupervisorCommentsComplete eq 1)')`,
    Top 5000, pagination on → Apply to each:
    - Get items (LINE ITEMS), Filter Query `concat('TimeCardNumber eq ', <current submission ID>)`
      (check the real internal name of Time Card Number)
