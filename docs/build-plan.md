@@ -1,6 +1,6 @@
 # Finish Crew Timecard — Cover Sheet Prefill & Pay Math Build Plan
 
-*Last updated 2026-10-02. Reflects the import flow, Send macro and app changes as built and
+*Last updated 2026-10-08. Reflects the import flow, Send macro and app changes as built and
 tested.*
 
 Files in this repository:
@@ -26,6 +26,7 @@ Every formula below uses the control and column names from the current app expor
 | 6 | Job picker, prefill, lead-only job list, navigation, delete scheduled job | Power Apps |
 | 7 | Test | — |
 | 8 | Field Supervisor Punch List (list view in Teams) | SharePoint |
+| 9 | Scale (7,000+ jobs/year): server-side filters, indexes, delegation, optional cleanup | Power Automate, SharePoint, Power Apps |
 
 Phase 4 fixes the current app, so do it (and test it) before the prefill work in Phase 6.
 The "why the math is wrong" details are in the appendix.
@@ -1654,6 +1655,88 @@ Field Super Punch List view → name the tab `Field Super Punch List`.
 - [ ] Clicking the checkbox ticks it and turns the comment red; clicking again turns it back to yellow.
 - [ ] Each supervisor's view shows only their code's jobs.
 - [ ] Everything works from the Teams tab in the browser and the Teams app, with no desktop Excel.
+
+---
+
+## Phase 9 — Scale (7,000+ jobs a year) and cleanup
+
+SharePoint lists handle millions of items. The limits that matter are:
+- **Get items returns 100 items by default, oldest first.** A flow that fetches the list and
+  filters afterwards silently misses new records once the list grows. (This is what dropped the
+  10/7 report.)
+- **5,000-item threshold.** Past 5,000 items, filtered queries fail unless the filtered columns
+  are indexed.
+- **Power Apps delegation.** A filter SharePoint can't evaluate itself (warning icon) only checks
+  the first 500–2,000 records.
+
+### 9.1 Daily report flow: server-side date filter
+Get items (SUBMISSIONS) → **Filter Query** (fx):
+```
+concat('Date ge ''', outputs('Compose_-_ReportStart'), ''' and Date lt ''', outputs('Compose_-_ReportEnd'), '''')
+```
+ReportStart/ReportEnd as `yyyy-MM-dd`. Top Count 500, Settings → Pagination on, threshold 5000.
+Keep Filter array as a safety net. Optional: in the Condition's False branch, email "No
+submissions found for <date>" before Terminate.
+
+### 9.2 Indexes (List settings → Indexed columns)
+
+| List | Index |
+|---|---|
+| SUBMISSIONS | Date (Job Date), Status, Created By, Title (Job Number), Supervisor, HasFieldSuperComment |
+| LINE ITEMS | Time Card Number |
+| SCHEDULED JOBS | JobDate, JobStatus, ImportKey, LeadInstaller |
+
+Create them before a list reaches 5,000 items.
+
+### 9.3 App: delegable filters
+**scrOpenSubmissions gallery → Items:**
+```
+Sort(
+    Filter(
+        SUBMISSIONS,
+        Status.Value = "Submitted",
+        varSupervisor || 'Created By'.Email = User().Email,
+        txtSearchJobNumber.Text = "" ||
+            StartsWith('Job Number', txtSearchJobNumber.Text) ||
+            StartsWith('Lead Installer', txtSearchJobNumber.Text)
+    ),
+    'Job Date',
+    SortOrder.Ascending
+)
+```
+- `Status.Value = "Submitted"` replaces the non-delegable `<> "Approved"`. Add
+  `|| Status.Value = "Rejected"` (in parentheses) if other open statuses are used.
+- `Lower()` is removed; email comparison is not case-sensitive in SharePoint.
+- In **btnApproved** (6.8 search-clear check) change `Status.Value <> "Approved"` to
+  `Status.Value = "Submitted"`.
+
+The job picker, line-item lookups (Time Card Number) and ID lookups are already delegable.
+
+### 9.4 Optional monthly cleanup flow
+**First:** the daily Cover Sheet doesn't include pay amounts or pay items. Confirm payroll keeps
+them elsewhere before deleting SUBMISSIONS / LINE ITEMS.
+
+| List | Delete when |
+|---|---|
+| SCHEDULED JOBS | JobDate older than 60 days (any status) |
+| SUBMISSIONS + LINE ITEMS | Approved, Job Date older than 365 days, and punch list finished (no field super comment, or Complete = Yes) |
+
+Scheduled cloud flow, monthly:
+1. Compose – SubmissionsCutoff: `formatDateTime(addDays(utcNow(), -365), 'yyyy-MM-dd')`
+2. Compose – SchedCutoff: `formatDateTime(addDays(utcNow(), -60), 'yyyy-MM-dd')`
+3. Get items (SCHEDULED JOBS), Filter Query
+   `concat('JobDate lt ''', outputs('Compose_-_SchedCutoff'), '''')`, Top 5000, pagination on →
+   Apply to each → Delete item.
+4. Get items (SUBMISSIONS), Filter Query
+   `concat('Date lt ''', outputs('Compose_-_SubmissionsCutoff'), ''' and Status eq ''Approved'' and (HasFieldSuperComment eq 0 or FieldSupervisorCommentsComplete eq 1)')`,
+   Top 5000, pagination on → Apply to each:
+   - Get items (LINE ITEMS), Filter Query `concat('TimeCardNumber eq ', <current submission ID>)`
+     (check the real internal name of Time Card Number)
+   - Apply to each → Delete item (line items), then Delete item (the submission)
+5. Email a summary with the counts.
+
+Run it once with Compose steps in place of the Deletes and check the counts first. Deleted items
+stay in the site Recycle Bin for 93 days.
 
 ---
 
