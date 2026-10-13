@@ -1331,10 +1331,8 @@ review is done.
 
 **App.OnStart**: add at the end: `Set(varOpenSearch, "");`
 
-**Sort order:** the Open Submissions gallery sorts **oldest to newest by Job Date**. In its
-Items formula, the final two Sort arguments are `'Job Date', SortOrder.Ascending` (previously
-`ID, SortOrder.Descending`). Use `ID` instead of `'Job Date'` to sort by when the card was
-submitted.
+**Sort order:** the Open Submissions gallery sorts by **Time Card # (ID), oldest first**. The
+full Items formula is in 9.3.
 
 **scrOpenSubmissions → txtSearchJobNumber**
 
@@ -1688,26 +1686,31 @@ submissions found for <date>" before Terminate.
 Create them before a list reaches 5,000 items.
 
 ### 9.3 App: delegable filters
-**scrOpenSubmissions gallery → Items:**
+**scrOpenSubmissions gallery (galOpenSubmissions) → Items:**
 ```
 Sort(
     Filter(
         SUBMISSIONS,
-        Status.Value = "Submitted",
+        Status.Value = "Submitted" || Status.Value = "Draft",
         varSupervisor || 'Created By'.Email = User().Email,
         txtSearchJobNumber.Text = "" ||
             StartsWith('Job Number', txtSearchJobNumber.Text) ||
             StartsWith('Lead Installer', txtSearchJobNumber.Text)
     ),
-    'Job Date',
+    ID,
     SortOrder.Ascending
 )
 ```
-- `Status.Value = "Submitted"` replaces the non-delegable `<> "Approved"`. Add
-  `|| Status.Value = "Rejected"` (in parentheses) if other open statuses are used.
+- **Status:** the open statuses are listed by name instead of the non-delegable
+  `<> "Approved"`. In use: **Draft** (the default, set when Next creates the card) and
+  **Submitted**. Pending Approval, Rejected and Archived were removed from the Status choices. If
+  Draft isn't the default, use `Status.Value = "Submitted"` alone.
+- **Sort:** by **Time Card #**, which is the list's built-in **ID** column, oldest first.
+  "Time Card #" is only the label text and isn't a column, so `Sort(..., 'Time Card #', ...)`
+  errors. The ID is assigned when the card is first created (Next), not when it's submitted.
 - `Lower()` is removed; email comparison is not case-sensitive in SharePoint.
 - In **btnApproved** (6.8 search-clear check) change `Status.Value <> "Approved"` to
-  `Status.Value = "Submitted"`.
+  `Status.Value = "Submitted" || Status.Value = "Draft"`.
 
 The job picker, line-item lookups (Time Card Number) and ID lookups are already delegable.
 
