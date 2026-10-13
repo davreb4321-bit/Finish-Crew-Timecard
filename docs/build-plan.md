@@ -1,6 +1,6 @@
 # Finish Crew Timecard — Cover Sheet Prefill & Pay Math Build Plan
 
-*Last updated 2026-10-08. Reflects the import flow, Send macro and app changes as built and
+*Last updated 2026-10-13. Reflects the import flow, Send macro and app changes as built and
 tested.*
 
 Files in this repository:
@@ -603,146 +603,144 @@ Patch(
 
 **btnToLineItems.OnSelect** (Submit Time Card). Replace the whole formula with:
 ```
-If(
-    CountRows(colLineItems) = 0 &&
-    Coalesce(varLeadShopPay, 0) = 0 &&
-    Coalesce(varHelperShopPay, 0) = 0,
-
-    Notify(
-        "You must add at least one pay item or enter shop pay before submitting.",
-        NotificationType.Error
-    ),
-
-    Set(
-        varJobNumber,
-        LookUp(
-            SUBMISSIONS,
-            ID = varSubmissionID
-        ).'Job Number'
-    );
-
-    // ---- Totals (rounded to the cent) ----
-    Set(
-        varSelectedItemsTotal,
-        Round(Sum(colLineItems, 'Extended Total'), 2)
-    );
-
-    Set(
-        varLeadInstallerTotalPay,
-        Round(
-            Coalesce(varLeadShopPay, 0) +
-            varSelectedItemsTotal * Coalesce(varLeadPercent, 0) / 100,
-            2
-        )
-    );
-
-    Set(
-        varHelperInstallerTotalPay,
-        Round(
-            Coalesce(varHelperShopPay, 0) +
-            varSelectedItemsTotal * Coalesce(varHelperPercent, 0) / 100,
-            2
-        )
-    );
-
-    /*
-       When editing an existing Time Card, remove its old
-       LINE ITEMS records before saving the current collection.
-    */
-    If(
-        varEditMode,
-        RemoveIf(
-            'LINE ITEMS',
-            'Time Card Number' = Value(varSubmissionID)
-        )
-    );
-
-    /*
-       Recreate LINE ITEMS from the current contents of
-       colLineItems. Deleted collection rows are not recreated.
-    */
-    ForAll(
-        colLineItems,
-        Patch(
-            'LINE ITEMS',
-            Defaults('LINE ITEMS'),
-            {
-                'Time Card Number': Value(varSubmissionID),
-                'Job Number': varJobNumber,
-                'Item Code': Coalesce(
-                    'ItemCode',
-                    ItemCode
-                ),
-                'Pay Item': 'Pay Item',
-                Category: Category,
-                Quantity: Quantity,
-                Hours: Hours,
-                Rate: Rate,
-                'Extended Total': 'Extended Total',
-                'Display Order': 'Display Order'
-            }
-        )
-    );
-
-    Patch(
+Set(
+    varJobNumber,
+    LookUp(
         SUBMISSIONS,
-        LookUp(
-            SUBMISSIONS,
-            ID = varSubmissionID
-        ),
-        {
-            'Total Select Items Pay': varSelectedItemsTotal,
-            'Lead Installer Total Pay': varLeadInstallerTotalPay,
-            'Helper Installer Total Pay': varHelperInstallerTotalPay,
-            Status: {
-                Value: "Submitted"
-            }
-        }
-    );
+        ID = varSubmissionID
+    ).'Job Number'
+);
 
-    // (Phase 6.5 inserts the "mark scheduled job submitted" block here.)
+// ---- Totals (rounded to the cent) ----
+Set(
+    varSelectedItemsTotal,
+    Round(Sum(colLineItems, 'Extended Total'), 2)
+);
 
-    Refresh('LINE ITEMS');
-    Refresh(SUBMISSIONS);
-
-    Set(
-        varSelectedSubmission,
-        LookUp(
-            SUBMISSIONS,
-            ID = varSubmissionID
-        )
-    );
-
-    Clear(colLineItems);
-
-    // ---- Reset for the next time card ----
-    Set(varTotalPay, 0);
-    Set(varSelectedItemsTotal, 0);
-    Set(varLeadInstallerTotalPay, 0);
-    Set(varHelperInstallerTotalPay, 0);
-    Set(varLeadShopPay, 0);
-    Set(varHelperShopPay, 0);
-    Set(varLeadPercent, 0);
-    Set(varHelperPercent, 0);
-    Set(varLeadHourlyRate, 0);
-    Set(varHelperHourlyRate, 0);
-    Set(varEditMode, false);
-
-    Notify(
-        "Time Card Submitted",
-        NotificationType.Success
-    );
-
-    Navigate(
-        scrOpenSubmissions,
-        ScreenTransition.Fade
+Set(
+    varLeadInstallerTotalPay,
+    Round(
+        Coalesce(varLeadShopPay, 0) +
+        varSelectedItemsTotal * Coalesce(varLeadPercent, 0) / 100,
+        2
     )
+);
+
+Set(
+    varHelperInstallerTotalPay,
+    Round(
+        Coalesce(varHelperShopPay, 0) +
+        varSelectedItemsTotal * Coalesce(varHelperPercent, 0) / 100,
+        2
+    )
+);
+
+/*
+   When editing an existing Time Card, remove its old
+   LINE ITEMS records before saving the current collection.
+*/
+If(
+    varEditMode,
+    RemoveIf(
+        'LINE ITEMS',
+        'Time Card Number' = Value(varSubmissionID)
+    )
+);
+
+/*
+   Recreate LINE ITEMS from the current contents of
+   colLineItems. Deleted collection rows are not recreated.
+*/
+ForAll(
+    colLineItems,
+    Patch(
+        'LINE ITEMS',
+        Defaults('LINE ITEMS'),
+        {
+            'Time Card Number': Value(varSubmissionID),
+            'Job Number': varJobNumber,
+            'Item Code': Coalesce(
+                'ItemCode',
+                ItemCode
+            ),
+            'Pay Item': 'Pay Item',
+            Category: Category,
+            Quantity: Quantity,
+            Hours: Hours,
+            Rate: Rate,
+            'Extended Total': 'Extended Total',
+            'Display Order': 'Display Order'
+        }
+    )
+);
+
+Patch(
+    SUBMISSIONS,
+    LookUp(
+        SUBMISSIONS,
+        ID = varSubmissionID
+    ),
+    {
+        'Job Date': Today(),
+        'Total Select Items Pay': varSelectedItemsTotal,
+        'Lead Installer Total Pay': varLeadInstallerTotalPay,
+        'Helper Installer Total Pay': varHelperInstallerTotalPay,
+        Status: {
+            Value: "Submitted"
+        }
+    }
+);
+
+// (Phase 6.5 inserts the "mark scheduled job submitted" block here.)
+
+Refresh('LINE ITEMS');
+Refresh(SUBMISSIONS);
+
+Set(
+    varSelectedSubmission,
+    LookUp(
+        SUBMISSIONS,
+        ID = varSubmissionID
+    )
+);
+
+Clear(colLineItems);
+
+// ---- Reset for the next time card ----
+Set(varTotalPay, 0);
+Set(varSelectedItemsTotal, 0);
+Set(varLeadInstallerTotalPay, 0);
+Set(varHelperInstallerTotalPay, 0);
+Set(varLeadShopPay, 0);
+Set(varHelperShopPay, 0);
+Set(varLeadPercent, 0);
+Set(varHelperPercent, 0);
+Set(varLeadHourlyRate, 0);
+Set(varHelperHourlyRate, 0);
+Set(varEditMode, false);
+
+Notify(
+    "Time Card Submitted",
+    NotificationType.Success
+);
+
+Navigate(
+    scrOpenSubmissions,
+    ScreenTransition.Fade
 )
 ```
-Changes from the original: totals rounded to the cent, and the hourly rates reset **at the end**
-(not before saving). Clearing them earlier would zero shop pay if the user went back to
-scrJobInfo. The odd-looking `'Item Code': Coalesce('ItemCode', ItemCode)` is original and keeps
-item codes when a card is edited.
+Changes from the original:
+- Totals are rounded to the cent.
+- Hourly rates are reset **at the end** (not before saving). Clearing them earlier would zero shop
+  pay if the user went back to scrJobInfo.
+- **`'Job Date': Today()`** (added 2026-10-13): a card opened on one day (saved as Draft, which
+  puts it on that day's Cover Sheet) and submitted on a later day moves to the submit date, so the
+  next day's report picks it up. To keep supervisor corrections on their original date, use
+  `'Job Date': If(varSupervisor, LookUp(SUBMISSIONS, ID = varSubmissionID).'Job Date', Today()),`.
+- **No "at least one pay item or shop pay" requirement** (removed 2026-10-13): a card can be
+  submitted with no pay items and no shop pay, for example a no-charge visit.
+- The odd-looking `'Item Code': Coalesce('ItemCode', ItemCode)` is original and keeps item codes
+  when a card is edited.
 
 ### 4.7 scrTimeCardDetail
 
@@ -1481,6 +1479,8 @@ live labels), and on scrTimeCardDetail and the approval email (saved values).
 - [ ] Edit Time Card, change nothing, Save Changes → %, shop pay, Job Date and totals unchanged.
 - [ ] Edit Time Card, change Lead hours → shop pay and Lead Total Pay update after saving.
 - [ ] Edit Pay Items, change a quantity, submit → totals update; manual-rate items keep an editable rate.
+- [ ] Open a job one day (Draft), submit it the next → Job Date changes to the submit date and it appears on that day's report.
+- [ ] Submit a card with no pay items and no shop pay → it submits with $0 totals.
 
 ### 7.3 Phase 5 tests (Builder)
 - [ ] New card saves Builder Name; it shows on Open Submissions, the detail screen and the approval email.
