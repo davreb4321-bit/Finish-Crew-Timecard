@@ -50,6 +50,7 @@ Create a blank list named **SCHEDULED JOBS** on the IndyWarrantyTracking-NRG365 
 | 7 | Subdivision | Single line of text | |
 | 8 | LotNumber | Single line of text | Text, not number (lots like "9B") |
 | 9 | Phase | Single line of text | |
+| 9a | Address | Multiple lines of text (plain) | Added 2026-10-13; filled from the cover sheet's Address column |
 | 10 | JobStatus | Single line of text | Default value `Open`. **Index it** |
 | 11 | SubmissionID | Number | 0 decimal places |
 | 12 | ImportKey | Single line of text | **Index it** and turn on **Enforce unique values** |
@@ -108,6 +109,7 @@ What it does:
 - Treats `Not found` or `#REF!` from the Production Schedule lookups as blank and returns a warning
   for that row.
 - If a job number appears twice, imports the first row and warns about the second.
+- Reads the optional **Address** column (added 2026-10-13); older sheets without it still import.
 - Ignores all four comment columns.
 
 About the P: drive: Supervisor, Builder, Subdivision and Lot # are XLOOKUPs into the Production
@@ -158,6 +160,7 @@ Trigger → Delay → Copy file → Run script ─┬→ Apply to each → Delet
         | Subdivision | `items('Apply_to_each')?['subdivision']` |
         | LotNumber | `items('Apply_to_each')?['lot']` |
         | Phase | `items('Apply_to_each')?['phase']` |
+        | Address | `items('Apply_to_each')?['address']` |
         | JobStatus | `Open` (typed) |
         | ImportKey | `items('Apply_to_each')?['importKey']` |
 
@@ -279,7 +282,11 @@ per job:
 Job Number | Supervisor | Lead Installer | Helper Installer | Builder | Subdivision | Lot # |
 Phase | General Comments | Builder Comments | Field Super Comments | FQI Comments
 
-Script: `office-scripts/Populate Finish Crew Cover Sheet.ts`. Paste it over the old
+Script: `office-scripts/Populate Finish Crew Cover Sheet.ts`. It fills columns **by header name**
+(Job Number, Supervisor, Lead Installer, Helper Installer, Builder, Subdivision, Lot #, Phase,
+**Address**, General Comments, Builder Comments, Field Super Comments, FQI Comments), so columns
+can be added or moved in the master without changing the script. Address comes from SUBMISSIONS
+**Street Address** (`JobAddress`). Paste it over the old
 **POPULATE FINISH CREW COVER SHEET** script (Notepad → Ctrl+A, Ctrl+C → empty editor → Ctrl+V →
 Save). It keeps the same parameters (`recordsJson`, `reportDate`), so the flow's Run script step
 needs no changes. Point the flow's "copy template" step at the new master file.
@@ -295,7 +302,7 @@ What it does:
   every printed page.
 - Grows the table if a day ever has more than 94 jobs.
 
-Street Address and Zip Code are no longer on the report.
+Address was added back to the cover sheet on 2026-10-13 (column I); Zip Code is not on the report.
 
 Optional clean-up: the master still carries the external link to the P: drive Production
 Schedule. It does no harm, but desktop Excel may ask about updating links. To remove it, open the
@@ -1207,6 +1214,7 @@ unaffected because each formula checks `!varEditMode`.
 | Subdivision card | `If(!varEditMode && !IsBlank(varSchedJob), varSchedJob.Subdivision, ThisItem.Subdivision)` |
 | Lot Number card | `If(!varEditMode && !IsBlank(varSchedJob), varSchedJob.LotNumber, ThisItem.'Lot Number')` |
 | Phase card | `If(!varEditMode && !IsBlank(varSchedJob), varSchedJob.Phase, ThisItem.Phase)` |
+| Street Address card | `If(!varEditMode && !IsBlank(varSchedJob), varSchedJob.Address, ThisItem.'Street Address')` |
 
 The four comment cards don't change.
 

@@ -20,6 +20,7 @@ interface ScheduledRow {
   subdivision: string;
   lot: string;
   phase: string;
+  address: string;
   importKey: string;
 }
 
@@ -54,7 +55,9 @@ function main(workbook: ExcelScript.Workbook): ImportResult {
     builder: col("Builder"),
     subdivision: col("Subdivision"),
     lot: col("Lot #"),
-    phase: col("Phase")
+    phase: col("Phase"),
+    // Optional column: older cover sheets don't have it.
+    address: headers.indexOf("address")
   };
 
   const body = table.getRangeBetweenHeaderAndTotal();
@@ -92,6 +95,7 @@ function main(workbook: ExcelScript.Workbook): ImportResult {
       subdivision: lookupValue(r[c.subdivision]),
       lot: lookupValue(r[c.lot]),
       phase: clean(r[c.phase]).toUpperCase(),
+      address: c.address >= 0 ? lookupValue(r[c.address]) : "",
       importKey: jobNumber + "|" + jobDate
     };
 
