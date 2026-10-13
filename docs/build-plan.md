@@ -250,7 +250,8 @@ second button, **Clear Sheet**, assigned to **ClearCoverSheet**.
 It shows two warnings (job date and job count, then a final "cannot be undone"; **No** is the
 default button on both), then:
 - clears typed entries (Job Number, Lead, Helper, Phase, the four comment columns) and B4
-- keeps the P: drive lookup formulas in Supervisor, Builder, Subdivision and Lot #, and puts back
+- keeps the P: drive lookup formulas in Supervisor, Builder, Subdivision, Lot # and Address
+  (Production Schedule column K), and puts back
   any formula someone typed over
 - keeps the Lead/Helper drop-down menus, formatting and buttons, and resets row heights
 

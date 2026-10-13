@@ -5,7 +5,7 @@
 '   - Clears typed entries in table FINISHCOVER (Job Number, Lead Installer,
 '     Helper Installer, Phase and the four comment columns) and the Job Date (B4).
 '   - Keeps the Production Schedule (P: drive) formulas in Supervisor, Builder,
-'     Subdivision and Lot #. If someone typed over a formula, it is put back.
+'     Subdivision, Lot # and Address. If someone typed over a formula, it is put back.
 '   - Keeps drop-down menus (data validation), formatting and buttons.
 '   - Resets row heights.
 ' ============================================================================
@@ -64,6 +64,7 @@ Public Sub ClearCoverSheet()
     RestoreLookup lo, "Builder", "$A:$A"
     RestoreLookup lo, "Subdivision", "$C:$C"
     RestoreLookup lo, "Lot #", "$B:$B"
+    RestoreLookup lo, "Address", "$K:$K"
 
     ' Clear only typed values (constants). Formulas, drop-downs and formatting stay.
     If Not lo.DataBodyRange Is Nothing Then
