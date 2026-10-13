@@ -39,7 +39,7 @@ function main(workbook: ExcelScript.Workbook): ImportResult {
     throw new Error("Table FINISHCOVER was not found. Use the MASTER FINISH COVER SHEET template.");
   }
 
-  const jobDate = readJobDate(table.getWorksheet().getRange("B4"));
+  const jobDate: string = readJobDate(table.getWorksheet().getRange("B4"));
 
   // Look columns up by header name so column order changes in the template don't break the import.
   const headerTexts = table.getHeaderRowRange().getTexts()[0];
