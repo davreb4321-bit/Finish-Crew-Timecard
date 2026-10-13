@@ -1156,8 +1156,20 @@ With(
 | lblBuilderSub | `ThisItem.Builder & " – " & ThisItem.Subdivision` |
 | lblInstallerPhase | `ThisItem.LeadInstaller & If(IsBlank(ThisItem.HelperInstaller), "", " / " & ThisItem.HelperInstaller) & "   " & ThisItem.Phase` |
 
-If lines overlap, raise the gallery's **TemplateSize** (for example `110`). Set any label or
-icon's OnSelect in the row to `Select(Parent)`.
+| lblAddress | `Trim(Substitute(Substitute(ThisItem.Address, Char(13), " "), Char(10), " "))` (line breaks from the multi-line column would push the text down and cut it off) |
+
+Row layout, so the row grows with its contents instead of overlapping:
+
+| Control | Property | Value |
+|---|---|---|
+| lblAddress | Y | `lblInstallerPhase.Y + lblInstallerPhase.Height` |
+| btnCarryOver | Y | `lblAddress.Y + lblAddress.Height + 4` |
+| galSchedJobs | TemplateSize | `btnCarryOver.Y + btnCarryOver.Height + 12` |
+| galSchedJobs | Height | `btnJobNotListed.Y - galSchedJobs.Y - 10` (if the gallery runs behind the button, it won't scroll) |
+
+Set any label or icon's OnSelect in the row to `Select(Parent)`. Pop-up containers
+(conSchedDeleteConfirm, conCarryOver) take their Visible variable on the **container**, not on the
+controls inside it; otherwise the invisible container blocks scrolling.
 
 **Empty-list message.** Add a label on scrSelectJob. **Visible:**
 `CountRows(galSchedJobs.AllItems) = 0`. **Text:**
