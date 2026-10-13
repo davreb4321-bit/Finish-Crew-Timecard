@@ -92,7 +92,11 @@ function main(workbook: ExcelScript.Workbook, recordsJson: string, reportDate: s
 
   // ---- Table layout ----------------------------------------------------
   const headerRange = table.getHeaderRowRange();
-  const headers = headerRange.getTexts()[0].map(h => h.trim().toLowerCase());
+  const headerTexts = headerRange.getTexts()[0];
+  const headers: string[] = [];
+  for (let h = 0; h < headerTexts.length; h++) {
+    headers.push(headerTexts[h].trim().toLowerCase());
+  }
   const colCount = headers.length;
   const firstCol = headerRange.getColumnIndex();                 // 0-based
   const firstLetter = columnLetter(firstCol);
@@ -101,7 +105,14 @@ function main(workbook: ExcelScript.Workbook, recordsJson: string, reportDate: s
   const firstDataRow = headerRow + 1;
 
   // ---- Build one row of values per record ------------------------------
-  const rows: string[][] = records.map(r => headers.map(h => valueFor(h, r)));
+  const rows: string[][] = [];
+  for (let ri = 0; ri < records.length; ri++) {
+    const values: string[] = [];
+    for (let hi = 0; hi < headers.length; hi++) {
+      values.push(valueFor(headers[hi], records[ri]));
+    }
+    rows.push(values);
+  }
 
   // ---- Make sure the table is big enough -------------------------------
   const tableRange = table.getRange();
@@ -118,12 +129,12 @@ function main(workbook: ExcelScript.Workbook, recordsJson: string, reportDate: s
 
   // Job Number and Lot # as text so values like "0110" or "9B" are kept exactly.
   const textCols = ["job number", "lot #", "lot number"];
-  headers.forEach((h, i) => {
-    if (textCols.indexOf(h) >= 0) {
+  for (let i = 0; i < headers.length; i++) {
+    if (textCols.indexOf(headers[i]) >= 0) {
       const letter = columnLetter(firstCol + i);
       ws.getRange(letter + firstDataRow + ":" + letter + lastTableRow).setNumberFormat("@");
     }
-  });
+  }
 
   // Fill every table row: records first, then blanks. Writing the whole block replaces any
   // remaining calculated-column formulas with plain values.

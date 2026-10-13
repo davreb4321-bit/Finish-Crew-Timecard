@@ -9,6 +9,9 @@
  *   - the FINISHCOVER table is missing
  *   - B4 does not hold a real job date
  *   - no job rows are filled in
+ *
+ * Written without arrow functions, escaped quotes or regular expressions so it survives
+ * being pasted into the Excel script editor.
  */
 
 interface ScheduledRow {
@@ -39,26 +42,22 @@ function main(workbook: ExcelScript.Workbook): ImportResult {
   const jobDate = readJobDate(table.getWorksheet().getRange("B4"));
 
   // Look columns up by header name so column order changes in the template don't break the import.
-  const headers = (table.getHeaderRowRange().getTexts()[0]).map(h => h.trim().toLowerCase());
-  const col = (name: string): number => {
-    const i = headers.indexOf(name.toLowerCase());
-    if (i < 0) {
-      throw new Error("Column \"" + name + "\" was not found in table FINISHCOVER.");
-    }
-    return i;
-  };
-  const c = {
-    job: col("Job Number"),
-    supervisor: col("Supervisor"),
-    lead: col("Lead Installer"),
-    helper: col("Helper Installer"),
-    builder: col("Builder"),
-    subdivision: col("Subdivision"),
-    lot: col("Lot #"),
-    phase: col("Phase"),
-    // Optional column: older cover sheets don't have it.
-    address: headers.indexOf("address")
-  };
+  const headerTexts = table.getHeaderRowRange().getTexts()[0];
+  const headers: string[] = [];
+  for (let h = 0; h < headerTexts.length; h++) {
+    headers.push(headerTexts[h].trim().toLowerCase());
+  }
+
+  const cJob = requiredColumn(headers, "Job Number");
+  const cSupervisor = requiredColumn(headers, "Supervisor");
+  const cLead = requiredColumn(headers, "Lead Installer");
+  const cHelper = requiredColumn(headers, "Helper Installer");
+  const cBuilder = requiredColumn(headers, "Builder");
+  const cSubdivision = requiredColumn(headers, "Subdivision");
+  const cLot = requiredColumn(headers, "Lot #");
+  const cPhase = requiredColumn(headers, "Phase");
+  // Optional column: older cover sheets don't have it.
+  const cAddress = headers.indexOf("address");
 
   const body = table.getRangeBetweenHeaderAndTotal();
   if (!body) {
@@ -71,10 +70,11 @@ function main(workbook: ExcelScript.Workbook): ImportResult {
   const warnings: string[] = [];
   const seen: string[] = [];
 
-  texts.forEach((r, i) => {
-    const rawJob = clean(r[c.job]).toUpperCase();
+  for (let i = 0; i < texts.length; i++) {
+    const r = texts[i];
+    const rawJob = clean(r[cJob]).toUpperCase();
     if (rawJob === "") {
-      return; // unused template row
+      continue; // unused template row
     }
     // Same rule as the app: add N only when it is missing.
     const jobNumber = rawJob.startsWith("N") ? rawJob : "N" + rawJob;
@@ -82,20 +82,25 @@ function main(workbook: ExcelScript.Workbook): ImportResult {
 
     if (seen.indexOf(jobNumber) >= 0) {
       warnings.push("Row " + sheetRow + ": " + jobNumber + " is listed more than once; only the first row was imported.");
-      return;
+      continue;
     }
     seen.push(jobNumber);
 
+    let address = "";
+    if (cAddress >= 0) {
+      address = lookupValue(r[cAddress]);
+    }
+
     const row: ScheduledRow = {
       jobNumber: jobNumber,
-      supervisor: lookupValue(r[c.supervisor]),
-      leadInstaller: clean(r[c.lead]),
-      helperInstaller: clean(r[c.helper]),
-      builder: lookupValue(r[c.builder]),
-      subdivision: lookupValue(r[c.subdivision]),
-      lot: lookupValue(r[c.lot]),
-      phase: clean(r[c.phase]).toUpperCase(),
-      address: c.address >= 0 ? lookupValue(r[c.address]) : "",
+      supervisor: lookupValue(r[cSupervisor]),
+      leadInstaller: clean(r[cLead]),
+      helperInstaller: clean(r[cHelper]),
+      builder: lookupValue(r[cBuilder]),
+      subdivision: lookupValue(r[cSubdivision]),
+      lot: lookupValue(r[cLot]),
+      phase: clean(r[cPhase]).toUpperCase(),
+      address: address,
       importKey: jobNumber + "|" + jobDate
     };
 
@@ -110,7 +115,7 @@ function main(workbook: ExcelScript.Workbook): ImportResult {
     }
 
     rows.push(row);
-  });
+  }
 
   if (rows.length === 0) {
     throw new Error("No job numbers were found in table FINISHCOVER.");
@@ -119,9 +124,37 @@ function main(workbook: ExcelScript.Workbook): ImportResult {
   return { jobDate: jobDate, rows: rows, warnings: warnings };
 }
 
-/** Collapses whitespace/line breaks from wrapped cells. */
+/** Index of a required column; stops with a clear message if it is missing. */
+function requiredColumn(headers: string[], name: string): number {
+  const i = headers.indexOf(name.toLowerCase());
+  if (i < 0) {
+    throw new Error("Column '" + name + "' was not found in table FINISHCOVER.");
+  }
+  return i;
+}
+
+/** Collapses spaces, tabs and line breaks from wrapped cells into single spaces. */
 function clean(value: string): string {
-  return (value === undefined || value === null ? "" : String(value)).replace(/\s+/g, " ").trim();
+  if (value === undefined || value === null) {
+    return "";
+  }
+  const text = String(value);
+  let out = "";
+  let lastWasSpace = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text.charAt(i);
+    const isSpace = text.charCodeAt(i) <= 32; // space, tab, line break
+    if (isSpace) {
+      if (!lastWasSpace) {
+        out = out + " ";
+      }
+      lastWasSpace = true;
+    } else {
+      out = out + ch;
+      lastWasSpace = false;
+    }
+  }
+  return out.trim();
 }
 
 /** Production-schedule XLOOKUP cells show "Not found" or "#REF!"-style errors when the link fails; treat those as blank. */
@@ -133,9 +166,24 @@ function lookupValue(value: string): string {
   return v;
 }
 
+/** True when every character of the text is a digit 0-9 (and it isn't empty). */
+function isDigits(text: string): boolean {
+  if (text.length === 0) {
+    return false;
+  }
+  for (let i = 0; i < text.length; i++) {
+    const ch = text.charAt(i);
+    if (ch < "0" || ch > "9") {
+      return false;
+    }
+  }
+  return true;
+}
+
 /** Accepts a real Excel date or m/d/yyyy text in B4 and returns yyyy-mm-dd. */
 function readJobDate(cell: ExcelScript.Range): string {
   const raw = cell.getValue();
+  const badDate = "Job Date in B4 (" + cell.getText() + ") is not a valid date. Use m/d/yyyy.";
   let y: number;
   let m: number;
   let d: number;
@@ -148,9 +196,8 @@ function readJobDate(cell: ExcelScript.Range): string {
     d = dt.getUTCDate();
   } else {
     const parts = String(raw).trim().split("/");
-    const digitsOnly = parts.every(p => p.length > 0 && !isNaN(Number(p)) && p.indexOf(".") < 0);
-    if (parts.length !== 3 || !digitsOnly || parts[2].length > 4) {
-      throw new Error("Job Date in B4 (\"" + cell.getText() + "\") is not a valid date. Use m/d/yyyy.");
+    if (parts.length !== 3 || !isDigits(parts[0]) || !isDigits(parts[1]) || !isDigits(parts[2]) || parts[2].length > 4) {
+      throw new Error(badDate);
     }
     m = Number(parts[0]);
     d = Number(parts[1]);
@@ -166,8 +213,10 @@ function readJobDate(cell: ExcelScript.Range): string {
     check.getUTCFullYear() !== y || check.getUTCMonth() !== m - 1 || check.getUTCDate() !== d ||
     y < currentYear - 1 || y > currentYear + 1
   ) {
-    throw new Error("Job Date in B4 (\"" + cell.getText() + "\") is not a valid date. Use m/d/yyyy.");
+    throw new Error(badDate);
   }
 
-  return y + "-" + (m < 10 ? "0" : "") + m + "-" + (d < 10 ? "0" : "") + d;
+  const mm = m < 10 ? "0" + m : "" + m;
+  const dd = d < 10 ? "0" + d : "" + d;
+  return y + "-" + mm + "-" + dd;
 }
