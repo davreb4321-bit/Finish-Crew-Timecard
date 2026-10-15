@@ -1229,6 +1229,11 @@ unaffected because each formula checks `!varEditMode`.
 | Phase card | `If(!varEditMode && !IsBlank(varSchedJob), varSchedJob.Phase, ThisItem.Phase)` |
 | Street Address card | `If(!varEditMode && !IsBlank(varSchedJob), varSchedJob.Address, ThisItem.'Street Address')` |
 
+The Street Address card must be a **field of frmSubmission** (Edit fields → Add field → Street
+Address) with **Update** set to its own text box (e.g. `DataCardValue25.Text`). A label that only
+shows `varSchedJob.Address` displays the address but never saves it, so the report flow gets no
+address (found 2026-10-15).
+
 The four comment cards don't change.
 
 **Lock the schedule data.** On the **text box inside** the Job Number, Supervisor, Builder Name,
