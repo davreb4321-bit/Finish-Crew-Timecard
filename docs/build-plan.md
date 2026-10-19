@@ -1473,36 +1473,49 @@ Users who delete need **Edit** access to the SCHEDULED JOBS list.
 
 ### 6.10 scrSelectJob: Carry Over a job to the next working day
 
-For a job that can't be finished today. One tap creates a **Draft** time card prefilled from the
-scheduled job, with **Job Date = today** and the note **"Carry job over to <next working day> –
-<reason>"**. The next morning's Cover Sheet shows the note to the office. The scheduled job is
-marked **Carried Over** and stays in the picker; tapping it opens the same draft, so no duplicate
-time card is made. When the crew submits it, the Submit button sets the Job Date to that day (4.6).
+*(Revised 2026-10-19 at the installers' request. The first version created a Draft time card and
+moved the job to Open Submissions; this one changes nothing the crew sees.)*
 
-Every SUBMISSIONS item gets a Time Card # (its ID), so the draft has one. It's the same card that
-gets submitted later, so no extra numbers are used.
+For a job that can't be finished today. One tap **emails the office** "Carry job over to <next
+working day> – <reason>" with the job details, and saves the note on the scheduled job. The job
+**stays in galSchedJobs exactly as it was** (same look, still **Open**, no Draft, nothing in Open
+Submissions). The next day the crew taps it and it opens in scrJobInfo prefilled like any other
+job; Submit sets the Job Date to that day (4.6).
 
-**Where the note goes:** Field Supervisor Comments (as requested), which also puts it on the Field
-Super Punch List as a yellow item. To keep it off the punch list, write it to General Comments
-instead (one line in the formula below).
+The office learns about the carry-over from the email, not from the Cover Sheet report (no time
+card exists until the crew submits).
 
-**Tell the Production office** not to list carried-over jobs again on the next cover sheet; a
-re-listed job becomes a second scheduled job.
+**Before switching over:** in SCHEDULED JOBS, look for rows with JobStatus **Carried Over** (made
+by the first version). For each, delete its Draft from Open Submissions in the app; 6.6 sets the
+job back to **Open**. Then make the changes below.
 
-**1. Button in galSchedJobs' first row:** `btnCarryOver`, Text `"Carry Over"`.
+**1. SCHEDULED JOBS: two new columns**
+
+| Column | Type | Purpose |
+|---|---|---|
+| CarryOverNote | Single line of text | Last carry-over note, for reference |
+| CarriedOn | Date only | Last day the job was carried; keeps it in the job list past the 3-day window |
+
+**2. App.OnStart:** add (one address, or several separated by `;`):
+```
+Set(varShowCarryOver, false);
+Set(varOfficeEmail, "office@airtron.com");
+```
+
+**3. Button in galSchedJobs' first row:** `btnCarryOver`, Text `"Carry Job Over"`.
 - OnSelect: `Set(varCarryJob, ThisItem); Reset(txtCarryReason); Set(varShowCarryOver, true)`
-- Visible: `ThisItem.JobStatus = "Open"`
+- Visible: `true`
 
-**2. Label in the row:** `lblCarried`, Text `"CARRIED OVER – tap to finish"`, red,
-Visible `ThisItem.JobStatus = "Carried Over"`.
+Delete **lblCarried** (no "CARRIED OVER" label any more).
 
-**3. Pop-up:** Container `conCarryOver` (full screen, Visible `varShowCarryOver`), dark
-rectangle + white box, containing:
+**4. Pop-up:** Container `conCarryOver` (full screen, **Visible on the container**:
+`varShowCarryOver`), dark rectangle + white box, containing:
 - Label:
   ```
   "Carry over " & varCarryJob.Title & "   Lot " & varCarryJob.LotNumber & "?" & Char(10) & Char(10) &
-  "A Draft time card will be created with the note:" & Char(10) &
-  "Carry job over to " & Text(DateAdd(Today(), Switch(Weekday(Today()), 6, 3, 7, 2, 1), TimeUnit.Days), "m/d/yyyy")
+  "The office will be emailed:" & Char(10) &
+  "Carry job over to " & Text(DateAdd(Today(), Switch(Weekday(Today()), 6, 3, 7, 2, 1), TimeUnit.Days), "m/d/yyyy") & Char(10) & Char(10) &
+  "The job stays in your list."
   ```
 - Text input `txtCarryReason`, HintText `"Reason (optional), e.g. House not ready"`
 - Cancel button: `Set(varShowCarryOver, false); Set(varCarryJob, Blank())`
@@ -1511,101 +1524,74 @@ rectangle + white box, containing:
   With(
       {
           nextDay: DateAdd(Today(), Switch(Weekday(Today()), 6, 3, 7, 2, 1), TimeUnit.Days),
-          split: LookUp(
-              colPaySplits,
-              Lower(Trim('Lead Installer')) = Lower(Trim(varCarryJob.LeadInstaller)) &&
-              Lower(Trim(Coalesce('Helper Installer', ""))) = Lower(Trim(Coalesce(varCarryJob.HelperInstaller, "")))
-          )
+          reason: Trim(txtCarryReason.Text)
       },
-      Set(
-          varCarryDraft,
+      With(
+          {
+              note: "Carry job over to " & Text(nextDay, "m/d/yyyy") &
+                    If(IsBlank(reason), "", " – " & reason)
+          },
           Patch(
-              SUBMISSIONS,
-              Defaults(SUBMISSIONS),
-              {
-                  'Job Number': varCarryJob.Title,
-                  'Job Date': Today(),
-                  Supervisor: varCarryJob.Supervisor,
-                  'Lead Installer': varCarryJob.LeadInstaller,
-                  'Helper Installer': varCarryJob.HelperInstaller,
-                  BuilderName: varCarryJob.Builder,
-                  Subdivision: varCarryJob.Subdivision,
-                  'Lot Number': varCarryJob.LotNumber,
-                  Phase: varCarryJob.Phase,
-                  'Street Address': varCarryJob.Address,
-                  'Lead Installer % of Pay': If(!IsBlank(split), Text(split.'Lead Percentage'), IsBlank(varCarryJob.HelperInstaller), "100", ""),
-                  'Helper Installer % of Pay': If(!IsBlank(split), Text(split.'Helper Percentage'), IsBlank(varCarryJob.HelperInstaller), "0", ""),
-                  // For General Comments instead, change the next line's name to 'General Comments'.
-                  'Field Supervisor Comments':
-                      "Carry job over to " & Text(nextDay, "m/d/yyyy") &
-                      If(IsBlank(Trim(txtCarryReason.Text)), "", " – " & Trim(txtCarryReason.Text)),
-                  ScheduleJobID: varCarryJob.ID,
-                  Status: { Value: "Draft" }
-              }
+              'SCHEDULED JOBS',
+              LookUp('SCHEDULED JOBS', ID = varCarryJob.ID),
+              { CarryOverNote: note, CarriedOn: Today() }
+          );
+          Office365Outlook.SendEmailV2(
+              varOfficeEmail,
+              "CARRY OVER: " & varCarryJob.Title & "   Lot " & varCarryJob.LotNumber &
+                  " to " & Text(nextDay, "m/d"),
+              "<b>" & note & "</b><br><br>" &
+              "<b>Job Number:</b> " & varCarryJob.Title & "<br>" &
+              "<b>Scheduled:</b> " & Text(varCarryJob.JobDate, "m/d/yyyy") & "<br>" &
+              "<b>Builder:</b> " & varCarryJob.Builder & "<br>" &
+              "<b>Subdivision:</b> " & varCarryJob.Subdivision & "<br>" &
+              "<b>Lot:</b> " & varCarryJob.LotNumber & "<br>" &
+              "<b>Address:</b> " & varCarryJob.Address & "<br>" &
+              "<b>Supervisor:</b> " & varCarryJob.Supervisor & "<br>" &
+              "<b>Installers:</b> " & varCarryJob.LeadInstaller &
+                  If(IsBlank(varCarryJob.HelperInstaller), "", " / " & varCarryJob.HelperInstaller) & "<br>" &
+              "<b>Phase:</b> " & varCarryJob.Phase & "<br><br>" &
+              "Sent by " & User().FullName & " from the Finish Crew app."
           )
-      );
-      Patch(
-          'SCHEDULED JOBS',
-          LookUp('SCHEDULED JOBS', ID = varCarryJob.ID),
-          { JobStatus: "Carried Over", SubmissionID: varCarryDraft.ID }
       )
   );
 
   Set(varShowCarryOver, false);
   Set(varCarryJob, Blank());
   Refresh('SCHEDULED JOBS');
-  Notify("Job carried over. Draft Time Card #" & varCarryDraft.ID & " created.", NotificationType.Success)
+  Notify("Carry over sent to the office. The job stays in your list.", NotificationType.Success)
   ```
   "Next working day": Friday → Monday, Saturday → Monday, otherwise tomorrow.
 
-**4. galSchedJobs → Items:** in both Filter calls, `JobStatus = "Open",` becomes
-`(JobStatus = "Open" || JobStatus = "Carried Over"),`.
-
-**5. galSchedJobs → OnSelect:**
+**5. galSchedJobs → Items:** in **both** Filter calls, replace
+`JobDate >= DateAdd(Today(), -3, TimeUnit.Days)` with
 ```
-If(
-    ThisItem.JobStatus = "Carried Over",
+(JobDate >= DateAdd(Today(), -3, TimeUnit.Days) || CarriedOn >= DateAdd(Today(), -3, TimeUnit.Days))
+```
+and keep `JobStatus = "Open"` (remove `|| JobStatus = "Carried Over"` if it was added).
 
-    Set(varSelectedSubmission, LookUp(SUBMISSIONS, ID = ThisItem.SubmissionID));
-    Navigate(scrTimeCardDetail, ScreenTransition.Fade),
-
-    NewForm(frmSubmission);
-    Set(varSubmissionID, 0);
-    Set(varEditMode, false);
-    Set(varEditSubmission, Blank());
-    Clear(colLineItems);
-    Set(varSchedJob, ThisItem);
-    Set(varJobInfoLoaded, false);
-    Navigate(scrJobInfo, ScreenTransition.Fade)
-)
+**6. galSchedJobs → OnSelect:** back to the normal version only:
+```
+NewForm(frmSubmission);
+Set(varSubmissionID, 0);
+Set(varEditMode, false);
+Set(varEditSubmission, Blank());
+Clear(colLineItems);
+Set(varSchedJob, ThisItem);
+Set(varJobInfoLoaded, false);
+Navigate(scrJobInfo, ScreenTransition.Fade)
 ```
 
-**6. App.OnStart:** `Set(varShowCarryOver, false);`
-
-**7. scrPayItems → btnToLineItems:** after the SUBMISSIONS Patch that sets Status to Submitted:
-```
-With(
-    { sjId: LookUp(SUBMISSIONS, ID = varSubmissionID).ScheduleJobID },
-    If(
-        !IsBlank(sjId),
-        Patch(
-            'SCHEDULED JOBS',
-            LookUp('SCHEDULED JOBS', ID = sjId),
-            { JobStatus: "Submitted", SubmissionID: varSubmissionID }
-        )
-    )
-);
-```
-
-**Next day for the crew:** tap the CARRIED OVER job → scrTimeCardDetail → **Edit Time Card** (add
-hours or comments, Save) if needed → **Edit Pay Items** → add items → **Submit Time Card**.
+**7. scrPayItems → btnToLineItems:** unchanged. Its step that marks the scheduled job
+**Submitted** still removes the job from the list when the card is submitted.
 
 **Tests**
-- [ ] Carry Over with a reason → Draft in Open Submissions with the note; picker shows CARRIED OVER.
-- [ ] Report flow for today → draft on the cover sheet with the note.
-- [ ] Next day: tap carried job → same draft opens → Edit Pay Items → Submit → Job Date = today, Submitted, gone from picker.
-- [ ] Delete the draft → scheduled job returns to Open (6.6).
-- [ ] Friday carry-over → note shows Monday's date.
+- [ ] Carry Over with a reason → office receives the email with the note and job details; the job
+  still shows in the list unchanged; nothing new in Open Submissions.
+- [ ] Next day: tap the job → scrJobInfo prefilled → Next → Pay Items → Submit → Job Date = today,
+  job gone from the list.
+- [ ] A job carried on several days in a row stays in the list (CarriedOn keeps it in the window).
+- [ ] Friday carry-over → email shows Monday's date.
 
 ---
 
