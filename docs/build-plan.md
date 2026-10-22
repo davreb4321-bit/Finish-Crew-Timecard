@@ -1593,6 +1593,149 @@ Navigate(scrJobInfo, ScreenTransition.Fade)
 - [ ] A job carried on several days in a row stays in the list (CarriedOn keeps it in the window).
 - [ ] Friday carry-over → email shows Monday's date.
 
+### 6.11 Helpers use the app on the same job (added 2026-10-22)
+
+The Helper signs in with their own account and works on the job **while staying Helper**; nothing
+on the card is swapped. Lead and Helper can both have the app open at the same time. Both see the
+job in the job list and the card in Open Submissions, and both open the **same** time card, so
+no duplicates are created.
+
+**0. Setup (no code)**
+- Each helper has a row in **FINISH CREW EMAIL LIST**. **Employee Name** must match the name
+  used in Helper Installer on the cover sheet exactly, and **Email Address** must be their sign-in
+  email. This is how the app recognizes them (`varMyName`, 6.1).
+- Share the app with them, and give them **Edit** on SUBMISSIONS, LINE ITEMS and SCHEDULED JOBS.
+- Index **HelperInstaller** (SCHEDULED JOBS) and **Lead Installer** and **Helper Installer**
+  (SUBMISSIONS) before the lists reach 5,000 items (9.2).
+
+**1. galSchedJobs → Items:** the installer filter matches Lead **or** Helper:
+```
+With(
+    {
+        jobs: If(
+            varSupervisor,
+            Filter(
+                'SCHEDULED JOBS',
+                JobStatus = "Open",
+                (JobDate >= DateAdd(Today(), -3, TimeUnit.Days) || CarriedOn >= DateAdd(Today(), -3, TimeUnit.Days))
+            ),
+            Filter(
+                'SCHEDULED JOBS',
+                JobStatus = "Open",
+                (JobDate >= DateAdd(Today(), -3, TimeUnit.Days) || CarriedOn >= DateAdd(Today(), -3, TimeUnit.Days)),
+                !IsBlank(varMyName),
+                LeadInstaller = varMyName || HelperInstaller = varMyName
+            )
+        )
+    },
+    Sort(
+        Filter(
+            jobs,
+            txtSearchSchedJob.Text = "" ||
+            StartsWith('Job Number', txtSearchSchedJob.Text) ||
+            StartsWith(LeadInstaller, txtSearchSchedJob.Text)
+        ),
+        JobDate,
+        SortOrder.Ascending
+    )
+)
+```
+
+**2. galOpenSubmissions → Items:** show cards the user created **or** is Lead or Helper on:
+```
+Sort(
+    Filter(
+        SUBMISSIONS,
+        Status.Value = "Submitted" || Status.Value = "Draft",
+        varSupervisor ||
+            'Created By'.Email = User().Email ||
+            (!IsBlank(varMyName) && ('Lead Installer' = varMyName || 'Helper Installer' = varMyName)),
+        txtSearchJobNumber.Text = "" ||
+            StartsWith('Job Number', txtSearchJobNumber.Text) ||
+            StartsWith('Lead Installer', txtSearchJobNumber.Text)
+    ),
+    ID,
+    SortOrder.Ascending
+)
+```
+
+**3. frmSubmission.OnSuccess:** link the card to its scheduled job as soon as **Next** creates it
+(previously the link was made only on Submit). In the formula from 4.5, replace the last line
+`Navigate(scrPayItems, ScreenTransition.Fade)` with:
+```
+    If(
+        !IsBlank(varSchedJob),
+        Patch(SUBMISSIONS, frmSubmission.LastSubmit, { ScheduleJobID: varSchedJob.ID });
+        Patch(
+            'SCHEDULED JOBS',
+            LookUp('SCHEDULED JOBS', ID = varSchedJob.ID),
+            { SubmissionID: frmSubmission.LastSubmit.ID }
+        )
+    );
+    Navigate(scrPayItems, ScreenTransition.Fade)
+```
+JobStatus stays **Open**, so the job still shows in the list, looking the same.
+
+**4. galSchedJobs → OnSelect:** if a card was already started for the job (by either person),
+open it instead of starting a second one:
+```
+With(
+    { sjId: ThisItem.ID },
+    Refresh('SCHEDULED JOBS');
+    With(
+        { sj: LookUp('SCHEDULED JOBS', ID = sjId) },
+        With(
+            {
+                existing: If(
+                    IsBlank(sj.SubmissionID),
+                    Blank(),
+                    LookUp(SUBMISSIONS, ID = sj.SubmissionID)
+                )
+            },
+            If(
+                !IsBlank(existing),
+
+                Set(varSelectedSubmission, existing);
+                Notify("A time card was already started for this job. Opening it.", NotificationType.Information);
+                Navigate(scrTimeCardDetail, ScreenTransition.Fade),
+
+                NewForm(frmSubmission);
+                Set(varSubmissionID, 0);
+                Set(varEditMode, false);
+                Set(varEditSubmission, Blank());
+                Clear(colLineItems);
+                Set(varSchedJob, sj);
+                Set(varJobInfoLoaded, false);
+                Navigate(scrJobInfo, ScreenTransition.Fade)
+            )
+        )
+    )
+)
+```
+From scrTimeCardDetail the person uses **Edit Time Card**, **Edit Pay Items** and **Submit** as
+usual. Check those buttons' **Visible**/**DisplayMode** don't test `'Created By'` (if they do,
+use `varSupervisor || 'Created By'.Email = User().Email || ThisItem.'Lead Installer' = varMyName || ThisItem.'Helper Installer' = varMyName` style conditions on `varSelectedSubmission`).
+
+**Rules for the crew (both in the app at once)**
+- Either person can start the card, edit it, add pay items or submit. The other sees the same
+  card.
+- **Don't edit the same card at the same moment.** The last save wins: if both change pay items,
+  the second Submit replaces the first person's items. Agree who enters pay items.
+- If a save shows an error that the item was changed, go back to Open Submissions, reopen the card
+  and redo the change.
+- If both tap **Next** on a brand-new job within the same few seconds, two cards can still be
+  made; delete the extra one in Open Submissions (6.6).
+- Cards started before this change aren't linked to their job; for those, open the card from Open
+  Submissions instead of the job list.
+
+**Tests**
+- [ ] Helper signs in → sees jobs where they are Helper; Lead still sees them too.
+- [ ] Lead taps the job → Next (Draft). Helper taps the same job → the Lead's card opens (no
+  second card).
+- [ ] Helper adds pay items and submits → Lead sees it Submitted; job leaves both lists.
+- [ ] Helper sees the card in Open Submissions while it's a Draft and after it's Submitted.
+- [ ] Delete the Draft → the job comes back to the list for both, and tapping it starts a new card.
+
 ---
 
 ## Phase 7 — Testing
