@@ -1246,24 +1246,52 @@ Set it on the text box, not the card, so the card still saves the value. A field
 swapped during the day, and changing an installer reloads the pay split (Phase 4.3).
 
 ### 6.5 scrPayItems: mark the job submitted
-In **btnToLineItems.OnSelect**, add this block right after the existing `Patch(SUBMISSIONS, …
-Status: {Value: "Submitted"} …);`:
+*(Revised 2026-10-23.)* In **btnToLineItems.OnSelect**, right after the
+`Patch(SUBMISSIONS, … Status: {Value: "Submitted"} …);`, **delete** the old
+`With( { sjId: … } … );` block and the old `If( !varEditMode && !IsBlank(varSchedJob), … );`
+block, and put this one block in their place. It finds the card's scheduled job in three ways, so
+the job leaves the list even when the card was finished through **Edit Pay Items**:
+1. the link saved on the card (ScheduleJobID, set by Next, 6.11 step 3);
+2. the job just picked from the list (new cards only);
+3. an **Open** scheduled job with the same Job Number.
 ```
-If(
-    !varEditMode && !IsBlank(varSchedJob),
-    Patch(
-        SUBMISSIONS,
-        LookUp(SUBMISSIONS, ID = varSubmissionID),
-        { ScheduleJobID: varSchedJob.ID }
-    );
-    Patch(
-        'SCHEDULED JOBS',
-        LookUp('SCHEDULED JOBS', ID = varSchedJob.ID),
-        { JobStatus: "Submitted", SubmissionID: varSubmissionID }
+With(
+    { linkedId: Value(LookUp(SUBMISSIONS, ID = varSubmissionID).ScheduleJobID) },
+    With(
+        {
+            sj: If(
+                !IsBlank(linkedId) && linkedId > 0,
+                LookUp('SCHEDULED JOBS', ID = linkedId),
+                !varEditMode && !IsBlank(varSchedJob),
+                LookUp('SCHEDULED JOBS', ID = varSchedJob.ID),
+                LookUp('SCHEDULED JOBS', Title = varJobNumber && JobStatus = "Open")
+            )
+        },
+        If(
+            !IsBlank(sj),
+            Patch(
+                SUBMISSIONS,
+                LookUp(SUBMISSIONS, ID = varSubmissionID),
+                { ScheduleJobID: sj.ID }
+            );
+            Patch(
+                'SCHEDULED JOBS',
+                LookUp('SCHEDULED JOBS', ID = sj.ID),
+                { JobStatus: "Submitted", SubmissionID: varSubmissionID }
+            )
+        )
     )
 );
 Set(varSchedJob, Blank());
 ```
+`varJobNumber` is set at the top of btnToLineItems. If the same Job Number is scheduled again on
+a later date while an earlier one is still Open, way 3 marks the oldest one; check SCHEDULED JOBS
+in that rare case.
+
+**Version label (to confirm which version a phone runs).** On scrSelectJob add a small grey label
+`lblVersion`, Text e.g. `"Version 10/23 B"`. Change the text every time you publish. When a crew
+reports a problem, ask what the label says; if it isn't the latest, their phone hasn't loaded the
+new version yet (fully close the app, or in Teams: … → Reload tab).
 
 ### 6.6 scrOpenSubmissions: reopen the job on delete
 In **btnFINALDELETE.OnSelect**, add at the very top (before `RemoveIf('LINE ITEMS', …)`):
