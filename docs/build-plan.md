@@ -1172,7 +1172,7 @@ Set any label or icon's OnSelect in the row to `Select(Parent)`. Pop-up containe
 controls inside it; otherwise the invisible container blocks scrolling.
 
 **Empty-list message.** Add a label on scrSelectJob. **Visible:**
-`CountRows(galSchedJobs.AllItems) = 0`. **Text:**
+`galSchedJobs.AllItemsCount = 0` (faster than `CountRows(galSchedJobs.AllItems)`). **Text:**
 ```
 If(
     !varSupervisor && IsBlank(varMyName),
@@ -1727,7 +1727,8 @@ If **OnSuccess** has any red error, Power Apps skips the whole formula: the card
 pasting. JobStatus stays **Open**, so the job still shows in the list, looking the same.
 
 **4. galSchedJobs → OnSelect:** if a card was already started for the job (by either person),
-open it instead of starting a second one:
+open it instead of starting a second one. `Value()` turns SubmissionID into a number first so the
+card lookup stays delegable once card numbers pass 500:
 ```
 With(
     { sjId: ThisItem.ID },
@@ -1735,28 +1736,31 @@ With(
     With(
         { sj: LookUp('SCHEDULED JOBS', ID = sjId) },
         With(
-            {
-                existing: If(
-                    IsBlank(sj.SubmissionID),
-                    Blank(),
-                    LookUp(SUBMISSIONS, ID = sj.SubmissionID)
+            { sid: Value(sj.SubmissionID) },
+            With(
+                {
+                    existing: If(
+                        IsBlank(sid) || sid = 0,
+                        Blank(),
+                        LookUp(SUBMISSIONS, ID = sid)
+                    )
+                },
+                If(
+                    !IsBlank(existing),
+
+                    Set(varSelectedSubmission, existing);
+                    Notify("A time card was already started for this job. Opening it.", NotificationType.Information);
+                    Navigate(scrTimeCardDetail, ScreenTransition.Fade),
+
+                    NewForm(frmSubmission);
+                    Set(varSubmissionID, 0);
+                    Set(varEditMode, false);
+                    Set(varEditSubmission, Blank());
+                    Clear(colLineItems);
+                    Set(varSchedJob, sj);
+                    Set(varJobInfoLoaded, false);
+                    Navigate(scrJobInfo, ScreenTransition.Fade)
                 )
-            },
-            If(
-                !IsBlank(existing),
-
-                Set(varSelectedSubmission, existing);
-                Notify("A time card was already started for this job. Opening it.", NotificationType.Information);
-                Navigate(scrTimeCardDetail, ScreenTransition.Fade),
-
-                NewForm(frmSubmission);
-                Set(varSubmissionID, 0);
-                Set(varEditMode, false);
-                Set(varEditSubmission, Blank());
-                Clear(colLineItems);
-                Set(varSchedJob, sj);
-                Set(varJobInfoLoaded, false);
-                Navigate(scrJobInfo, ScreenTransition.Fade)
             )
         )
     )
@@ -1777,6 +1781,10 @@ use `varSupervisor || 'Created By'.Email = User().Email || ThisItem.'Lead Instal
   made; delete the extra one in Open Submissions (6.6).
 - Cards started before this change aren't linked to their job; for those, open the card from Open
   Submissions instead of the job list.
+
+**App checker (2026-10-23):** no errors. Remaining delegation warnings on the email-list lookups
+(App.OnStart, btnApproved) and the accessibility/performance notes are harmless. Set **Settings →
+General → Data row limit** to **2000**.
 
 **Tests**
 - [ ] Helper signs in → sees jobs where they are Helper; Lead still sees them too.
