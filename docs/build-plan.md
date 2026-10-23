@@ -1696,19 +1696,23 @@ If(
     // New card: link it to its scheduled job. A failed link never blocks Pay Items.
     If(
         !IsBlank(varSchedJob),
-        IfError(
-            Patch(
-                SUBMISSIONS,
-                LookUp(SUBMISSIONS, ID = varSubmissionID),
-                { ScheduleJobID: varSchedJob.ID }
+        If(
+            IsError(
+                Patch(
+                    SUBMISSIONS,
+                    LookUp(SUBMISSIONS, ID = varSubmissionID),
+                    { ScheduleJobID: varSchedJob.ID }
+                )
             ),
             Notify("Card saved, but it couldn't be linked to the scheduled job.", NotificationType.Warning)
         );
-        IfError(
-            Patch(
-                'SCHEDULED JOBS',
-                LookUp('SCHEDULED JOBS', ID = varSchedJob.ID),
-                { SubmissionID: varSubmissionID }
+        If(
+            IsError(
+                Patch(
+                    'SCHEDULED JOBS',
+                    LookUp('SCHEDULED JOBS', ID = varSchedJob.ID),
+                    { SubmissionID: varSubmissionID }
+                )
             ),
             Notify("Card saved, but the scheduled job couldn't be updated.", NotificationType.Warning)
         )
@@ -1716,6 +1720,8 @@ If(
     Navigate(scrPayItems, ScreenTransition.Fade)
 )
 ```
+`IsError` is used rather than `IfError`, because IfError needs its value and fallback to be the
+same type (Patch returns a record, Notify a Boolean).
 If **OnSuccess** has any red error, Power Apps skips the whole formula: the card is still saved
 (it appears in Open Submissions) but the app stays on scrJobInfo. Check for red underlines after
 pasting. JobStatus stays **Open**, so the job still shows in the list, looking the same.
