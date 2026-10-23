@@ -1660,21 +1660,65 @@ Sort(
 ```
 
 **3. frmSubmission.OnSuccess:** link the card to its scheduled job as soon as **Next** creates it
-(previously the link was made only on Submit). In the formula from 4.5, replace the last line
-`Navigate(scrPayItems, ScreenTransition.Fade)` with:
+(previously the link was made only on Submit). Replace the whole OnSuccess with:
 ```
+Set(varSubmissionID, frmSubmission.LastSubmit.ID);
+
+If(
+    varEditMode,
+
+    With(
+        {
+            r: frmSubmission.LastSubmit,
+            t: Coalesce(frmSubmission.LastSubmit.'Total Select Items Pay', 0)
+        },
+        Patch(
+            SUBMISSIONS,
+            r,
+            {
+                'Lead Installer Total Pay': Round(
+                    Coalesce(r.'Lead Installer Total Shop Pay', 0) +
+                    t * Coalesce(Value(Substitute(r.'Lead Installer % of Pay', "%", "")), 0) / 100,
+                    2
+                ),
+                'Helper Installer Total Pay': Round(
+                    Coalesce(r.'Helper Installer Total Shop Pay', 0) +
+                    t * Coalesce(Value(Substitute(r.'Helper Installer % of Pay', "%", "")), 0) / 100,
+                    2
+                )
+            }
+        )
+    );
+    Set(varEditMode, false);
+    Notify("Changes Saved", NotificationType.Success);
+    Navigate(scrOpenSubmissions, ScreenTransition.Fade),
+
+    // New card: link it to its scheduled job. A failed link never blocks Pay Items.
     If(
         !IsBlank(varSchedJob),
-        Patch(SUBMISSIONS, frmSubmission.LastSubmit, { ScheduleJobID: varSchedJob.ID });
-        Patch(
-            'SCHEDULED JOBS',
-            LookUp('SCHEDULED JOBS', ID = varSchedJob.ID),
-            { SubmissionID: frmSubmission.LastSubmit.ID }
+        IfError(
+            Patch(
+                SUBMISSIONS,
+                LookUp(SUBMISSIONS, ID = varSubmissionID),
+                { ScheduleJobID: varSchedJob.ID }
+            ),
+            Notify("Card saved, but it couldn't be linked to the scheduled job.", NotificationType.Warning)
+        );
+        IfError(
+            Patch(
+                'SCHEDULED JOBS',
+                LookUp('SCHEDULED JOBS', ID = varSchedJob.ID),
+                { SubmissionID: varSubmissionID }
+            ),
+            Notify("Card saved, but the scheduled job couldn't be updated.", NotificationType.Warning)
         )
     );
     Navigate(scrPayItems, ScreenTransition.Fade)
+)
 ```
-JobStatus stays **Open**, so the job still shows in the list, looking the same.
+If **OnSuccess** has any red error, Power Apps skips the whole formula: the card is still saved
+(it appears in Open Submissions) but the app stays on scrJobInfo. Check for red underlines after
+pasting. JobStatus stays **Open**, so the job still shows in the list, looking the same.
 
 **4. galSchedJobs → OnSelect:** if a card was already started for the job (by either person),
 open it instead of starting a second one:
