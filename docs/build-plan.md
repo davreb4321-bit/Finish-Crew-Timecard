@@ -1246,7 +1246,7 @@ Set it on the text box, not the card, so the card still saves the value. A field
 swapped during the day, and changing an installer reloads the pay split (Phase 4.3).
 
 ### 6.5 scrPayItems: mark the job submitted
-*(Revised 2026-10-23.)* In **btnToLineItems.OnSelect**, right after the
+*(Revised 2026-10-23; **not yet applied in the app**: on hold until the installer's phone is confirmed on the latest version.)* In **btnToLineItems.OnSelect**, right after the
 `Patch(SUBMISSIONS, … Status: {Value: "Submitted"} …);`, **delete** the old
 `With( { sjId: … } … );` block and the old `If( !varEditMode && !IsBlank(varSchedJob), … );`
 block, and put this one block in their place. It finds the card's scheduled job in three ways, so
