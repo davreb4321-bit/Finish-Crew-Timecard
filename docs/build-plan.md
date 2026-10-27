@@ -1131,7 +1131,8 @@ With(
             jobs,
             txtSearchSchedJob.Text = "" ||
             StartsWith(Title, txtSearchSchedJob.Text) ||
-            StartsWith(LeadInstaller, txtSearchSchedJob.Text)
+            StartsWith(LeadInstaller, txtSearchSchedJob.Text) ||
+            StartsWith(HelperInstaller, txtSearchSchedJob.Text)
         ),
         JobDate,
         SortOrder.Ascending
@@ -1661,7 +1662,8 @@ With(
             jobs,
             txtSearchSchedJob.Text = "" ||
             StartsWith('Job Number', txtSearchSchedJob.Text) ||
-            StartsWith(LeadInstaller, txtSearchSchedJob.Text)
+            StartsWith(LeadInstaller, txtSearchSchedJob.Text) ||
+            StartsWith(HelperInstaller, txtSearchSchedJob.Text)
         ),
         JobDate,
         SortOrder.Ascending
