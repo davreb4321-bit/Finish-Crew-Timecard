@@ -1680,7 +1680,8 @@ Sort(
             (!IsBlank(varMyName) && ('Lead Installer' = varMyName || 'Helper Installer' = varMyName)),
         txtSearchJobNumber.Text = "" ||
             StartsWith('Job Number', txtSearchJobNumber.Text) ||
-            StartsWith('Lead Installer', txtSearchJobNumber.Text)
+            StartsWith('Lead Installer', txtSearchJobNumber.Text) ||
+            StartsWith('Helper Installer', txtSearchJobNumber.Text)
     ),
     ID,
     SortOrder.Ascending
@@ -2072,7 +2073,8 @@ Sort(
         varSupervisor || 'Created By'.Email = User().Email,
         txtSearchJobNumber.Text = "" ||
             StartsWith('Job Number', txtSearchJobNumber.Text) ||
-            StartsWith('Lead Installer', txtSearchJobNumber.Text)
+            StartsWith('Lead Installer', txtSearchJobNumber.Text) ||
+            StartsWith('Helper Installer', txtSearchJobNumber.Text)
     ),
     ID,
     SortOrder.Ascending
