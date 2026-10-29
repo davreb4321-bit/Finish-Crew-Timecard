@@ -12,8 +12,21 @@ sorts each *Description of Incident* (column K) into a root-cause theme, and wri
 pip install pandas pyxlsb openpyxl
 ```
 
+The script reads this workbook by default (set in `DEFAULT_WORKBOOK` at the top of the script):
+
+`P:\Indianapolis\IT STUFF FOR INDY\BACK CHARGES\LOADING FOLDER\2026 BACK CHARGE TRACKING.xlsb`
+
+On Windows, double-click `run_dashboard.bat`. It rebuilds both outputs next to the script and opens the dashboard.
+Or from a command prompt:
+
 ```bash
-python backcharge_dashboard.py "2026_BACK_CHARGE_TRACKING.xlsb" --out reports
+python backcharge_dashboard.py
+```
+
+To read a different workbook or write somewhere else:
+
+```bash
+python backcharge_dashboard.py "D:\other\workbook.xlsb" --out "C:\Reports"
 ```
 
 ## Tuning the themes

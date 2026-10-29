@@ -15,8 +15,9 @@ and writes:
 Usage
 -----
     pip install pandas pyxlsb openpyxl
-    python backcharge_dashboard.py "2026_BACK_CHARGE_TRACKING.xlsb"
-    python backcharge_dashboard.py "2026_BACK_CHARGE_TRACKING.xlsb" --out "C:/Reports"
+    python backcharge_dashboard.py                       (uses DEFAULT_WORKBOOK below)
+    python backcharge_dashboard.py "other_workbook.xlsb"
+    python backcharge_dashboard.py --out "C:/Reports"
 
 Tuning
 ------
@@ -38,6 +39,7 @@ import pandas as pd
 # --------------------------------------------------------------------------
 # Settings
 # --------------------------------------------------------------------------
+DEFAULT_WORKBOOK = r"P:\Indianapolis\IT STUFF FOR INDY\BACK CHARGES\LOADING FOLDER\2026 BACK CHARGE TRACKING.xlsb"
 SHEET_NAME = "Registry"
 HEADER_ROW = 9          # Excel row number that holds the column headings
 
@@ -887,10 +889,15 @@ render();
 
 def main():
     ap = argparse.ArgumentParser(description="Build the back charge dashboard from the Registry sheet.")
-    ap.add_argument("workbook", help="Path to the back charge tracking workbook (.xlsb or .xlsx)")
+    ap.add_argument("workbook", nargs="?", default=DEFAULT_WORKBOOK,
+                    help="Path to the back charge tracking workbook (.xlsb or .xlsx). "
+                         "Defaults to DEFAULT_WORKBOOK at the top of this script.")
     ap.add_argument("--out", default=".", help="Folder for the outputs (default: current folder)")
     args = ap.parse_args()
 
+    if not Path(args.workbook).exists():
+        raise SystemExit(f"Workbook not found: {args.workbook}\n"
+                         "Check that the P: drive is connected, or pass the workbook path as an argument.")
     df = load_registry(args.workbook)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
