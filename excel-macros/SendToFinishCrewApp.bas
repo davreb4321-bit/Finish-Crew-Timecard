@@ -5,7 +5,9 @@
 ' (table FINISHCOVER, job date in B4) in desktop Excel, then click the button.
 '
 ' The macro:
-'   0. Clears any filters on the cover sheet so every job row is visible.
+'   0. Treats rows hidden by a filter (or hidden by hand) as leftovers from an
+'      earlier day: after a warning it deletes their typed entries (lookup
+'      formulas stay), then removes the filter so every row is visible.
 '   1. Checks B4 holds a real date and at least one Job Number is entered.
 '   2. Warns if any Production Schedule lookup shows "Not found".
 '   3. Copies the cover sheet into a new workbook, replaces the P: drive
@@ -44,8 +46,8 @@ Public Sub SendToFinishCrewApp()
         Exit Sub
     End If
 
-    ' --- Clear any filters so every job row is visible --------------------
-    ClearFilters ws, lo
+    ' --- Delete jobs hidden by a filter, then show every row ---------------
+    If Not ClearHiddenRows(ws, lo) Then Exit Sub
 
     ' --- Pull the latest Production Schedule values ----------------------
     On Error Resume Next
@@ -143,14 +145,91 @@ SaveFailed:
         "the Cover Sheet Import folder.", vbCritical, "Send to Finish Crew App"
 End Sub
 
-' Shows all rows: clears the table's filter buttons and any sheet-level filter.
-' Filter buttons stay in place; only the filtering is undone.
-Private Sub ClearFilters(ws As Worksheet, lo As ListObject)
-    On Error Resume Next    ' a protected sheet can block this; the send still works
+' Rows hidden by a filter (or hidden by hand) are treated as leftovers from an
+' earlier day, so they are never sent. If any of them holds a Job Number the
+' user is warned first (No is the default). Typed entries in the hidden rows are
+' cleared; the lookup formulas stay. Then every row is shown again.
+' Returns False when the user stops or the rows can't be cleared.
+Private Function ClearHiddenRows(ws As Worksheet, lo As ListObject) As Boolean
+    Dim r As ListRow
+    Dim hiddenRows As Collection
+    Dim hr As Variant
+    Dim jobIdx As Long
+    Dim job As String
+    Dim jobList As String
+    Dim jobsHidden As Long
+    Dim jobsListed As Long
+    Dim constants As Range
+
+    ClearHiddenRows = True
+    Set hiddenRows = New Collection
+    If lo.DataBodyRange Is Nothing Then Exit Function
+
+    jobIdx = lo.ListColumns("Job Number").Index
+    For Each r In lo.ListRows
+        If r.Range.EntireRow.Hidden Then
+            hiddenRows.Add r
+            job = Trim(r.Range.Cells(1, jobIdx).Text)
+            If job <> "" Then
+                jobsHidden = jobsHidden + 1
+                If jobsListed < 10 Then
+                    jobList = jobList & vbCrLf & "      " & job
+                    jobsListed = jobsListed + 1
+                End If
+            End If
+        End If
+    Next r
+
+    If hiddenRows.Count = 0 Then
+        ShowAllRows ws, lo
+        Exit Function
+    End If
+
+    If jobsHidden > 0 Then
+        If jobsHidden > jobsListed Then
+            jobList = jobList & vbCrLf & "      ...and " & (jobsHidden - jobsListed) & " more"
+        End If
+        If MsgBox(jobsHidden & " job(s) are hidden by a filter and will NOT be sent:" & vbCrLf & _
+                  jobList & vbCrLf & vbCrLf & _
+                  "These are usually left over from an earlier day." & vbCrLf & vbCrLf & _
+                  "Yes  =  DELETE the hidden jobs and send only the visible ones." & vbCrLf & _
+                  "No   =  stop and show all rows so you can check them.", _
+                  vbYesNo + vbExclamation + vbDefaultButton2, "Send to Finish Crew App") <> vbYes Then
+            ShowAllRows ws, lo
+            ClearHiddenRows = False
+            Exit Function
+        End If
+    End If
+
+    ' Clear typed entries in the hidden rows (SpecialCells includes hidden cells).
+    On Error GoTo ClearFailed
+    For Each hr In hiddenRows
+        Set constants = Nothing
+        On Error Resume Next
+        Set constants = hr.Range.SpecialCells(xlCellTypeConstants)
+        On Error GoTo ClearFailed
+        If Not constants Is Nothing Then constants.ClearContents
+    Next hr
+    On Error GoTo 0
+
+    ShowAllRows ws, lo
+    Exit Function
+
+ClearFailed:
+    ClearHiddenRows = False
+    MsgBox "The hidden rows could not be cleared (" & Err.Description & ")." & vbCrLf & vbCrLf & _
+        "Nothing was sent. Clear the filter, delete the old jobs (or use All Clear), and try again.", _
+        vbCritical, "Send to Finish Crew App"
+End Function
+
+' Removes the table and sheet filters and unhides every table row.
+Private Sub ShowAllRows(ws As Worksheet, lo As ListObject)
+    On Error Resume Next
     If lo.ShowAutoFilter Then
         If lo.AutoFilter.FilterMode Then lo.AutoFilter.ShowAllData
     End If
     If ws.FilterMode Then ws.ShowAllData
+    If Not lo.DataBodyRange Is Nothing Then lo.DataBodyRange.EntireRow.Hidden = False
     On Error GoTo 0
 End Sub
 
