@@ -15,7 +15,8 @@ Back Charge Data and the old Property Damage PDF macro.
 4. Click **Send to Registry** (unchanged).
 5. Click **Create Property Damage PDFs**. Each PDF is saved to today's dated folder on P: and filed into its G: drive job folder,
    `G:\Mandi\Safety\Incident Investigations\2026 Incidents\Builder backcharges, 2026\<Lot> <Subdivision>, <Address>, <Deduction Date>, <Builder>`.
-   The folder is created if it doesn't exist.
+   If the house already has a folder (same lot, subdivision, address and builder; the date can differ), the PDF goes into it.
+   Otherwise a new folder is created. Case and extra spaces are ignored; everything else must match exactly.
 
 ## One-time setup
 

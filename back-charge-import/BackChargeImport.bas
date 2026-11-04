@@ -13,7 +13,9 @@ Attribute VB_Name = "BackChargeImport"
 '   for each row, saves the PDF to today's folder in the P: drive loading
 '   folder, and files a copy straight into its G: drive job folder, named
 '   "<Lot> <Subdivision>, <Address>, <Deduction Date>, <Builder>".
-'   The folder is created if it does not exist yet.
+'   If the house already has a folder (same lot, subdivision, address and
+'   builder, any date), the PDF goes into that folder; otherwise a new one is
+'   created.
 ' ============================================================================
 Option Explicit
 
@@ -93,7 +95,9 @@ End Sub
 Public Sub CreatePropertyDamagePDFs()
     Dim wsData As Worksheet, wsReport As Worksheet
     Dim i As Long, lastRow As Long, made As Long, filed As Long, missingRows As Long
+    Dim reused As Long, created As Long
     Dim pFolder As String, gFolder As String, fileName As String, failures As String
+    Dim houses As Object, newFolder As String, key As String, folderDate As Date
     Dim jobAddr As String, subDiv As String, lotNum As String, filePrefix As String
     Dim builderName As String, jobID As String, poNum As String
 
@@ -115,7 +119,9 @@ Public Sub CreatePropertyDamagePDFs()
 
     pFolder = LOADING_FOLDER & Format(Date, "yyyy-mm-dd") & "\"
     If Dir(pFolder, vbDirectory) = "" Then MkDir pFolder
-    If Dir(G_DRIVE_ROOT, vbDirectory) = "" Then
+    If Dir(G_DRIVE_ROOT, vbDirectory) <> "" Then
+        Set houses = LoadHouseFolders()
+    Else
         MsgBox "Cannot reach the G: drive folder:" & vbNewLine & G_DRIVE_ROOT & vbNewLine & vbNewLine & _
                "The PDFs will be saved on P: only.", vbExclamation, "Property Damage PDFs"
     End If
@@ -177,10 +183,22 @@ Public Sub CreatePropertyDamagePDFs()
 
         If Dir(pFolder & fileName) <> "" Then
             made = made + 1
-            If Dir(G_DRIVE_ROOT, vbDirectory) <> "" Then
-                gFolder = G_DRIVE_ROOT & JobFolderName(wsData, i) & "\"
+            If Not houses Is Nothing Then
+                ' Same lot, subdivision, address and builder = same house, whatever the date
+                newFolder = JobFolderName(wsData, i)
+                key = HouseKey(newFolder, folderDate)
                 On Error Resume Next
-                If Dir(gFolder, vbDirectory) = "" Then MkDir gFolder
+                If houses.Exists(key) Then
+                    gFolder = G_DRIVE_ROOT & houses.Item(key)(0) & "\"
+                    reused = reused + 1
+                Else
+                    gFolder = G_DRIVE_ROOT & newFolder & "\"
+                    MkDir gFolder
+                    If Err.Number = 0 Then
+                        houses.Add key, Array(newFolder, folderDate)
+                        created = created + 1
+                    End If
+                End If
                 FileCopy pFolder & fileName, gFolder & fileName
                 If Err.Number = 0 Then
                     filed = filed + 1
@@ -201,11 +219,57 @@ Public Sub CreatePropertyDamagePDFs()
 
     MsgBox "PDFs created on P: " & made & vbNewLine & _
            "Filed into G: job folders: " & filed & _
+           "  (existing house folders: " & reused & ", new folders: " & created & ")" & _
            IIf(failures <> "", vbNewLine & vbNewLine & "Problems:" & failures, ""), _
            IIf(failures = "", vbInformation, vbExclamation), "Property Damage PDFs"
 End Sub
 
 ' ----------------------------------------------------------------------------
+' Every folder already in the G: drive root, keyed by house (name minus the date).
+' When a house has more than one folder, the one with the latest date wins.
+Private Function LoadHouseFolders() As Object
+    Dim d As Object, nm As String, key As String, dt As Date
+
+    Set d = CreateObject("Scripting.Dictionary")
+    nm = Dir(G_DRIVE_ROOT & "*", vbDirectory)
+    Do While nm <> ""
+        If nm <> "." And nm <> ".." Then
+            If (GetAttr(G_DRIVE_ROOT & nm) And vbDirectory) = vbDirectory Then
+                key = HouseKey(nm, dt)
+                If Not d.Exists(key) Then
+                    d.Add key, Array(nm, dt)
+                ElseIf dt > d.Item(key)(1) Then
+                    d.Item(key) = Array(nm, dt)
+                End If
+            End If
+        End If
+        nm = Dir()
+    Loop
+    Set LoadHouseFolders = d
+End Function
+
+' "60B PARKROSE, 793 ROSEBUD LANE, 10-23-2026, FISCHER HOMES"
+'   -> key "60B PARKROSE|793 ROSEBUD LANE|FISCHER HOMES", dt = 10/23/2026
+' Case and extra spaces are ignored; every other character must match.
+Private Function HouseKey(ByVal folderName As String, ByRef dt As Date) As String
+    Dim part As Variant, p As String, bits() As String, key As String
+
+    dt = 0
+    For Each part In Split(folderName, ",")
+        p = UCase(Trim(part))
+        Do While InStr(p, "  ") > 0
+            p = Replace(p, "  ", " ")
+        Loop
+        bits = Split(p, "-")
+        If p Like "#*-#*-####" And UBound(bits) = 2 Then
+            dt = DateSerial(Val(bits(2)), Val(bits(0)), Val(bits(1)))
+        ElseIf p <> "" Then
+            key = key & IIf(key = "", "", "|") & p
+        End If
+    Next part
+    HouseKey = key
+End Function
+
 ' "2 HICKORY RUN, 10109 BITTERNUT RUN LANE, 10-19-2026, MI HOMES"
 Private Function JobFolderName(ws As Worksheet, r As Long) As String
     Dim lotSub As String, addr As String, dt As String, parts As String
