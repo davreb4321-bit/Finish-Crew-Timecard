@@ -15,11 +15,17 @@
 '   If the house already has a folder (any date), the PDF goes into it;
 '   otherwise a new one is created. "Same house" uses the glossary below, so
 '   Ln/Lane, St/Street, Fischer/Fischer Homes etc. count as the same.
+'
+'   It then files the split accounting sheets (one PDF per back charge, made by
+'   bc_import.py and listed on the "Accounting Sheets" tab of
+'   BC_Import_Ready.xlsx) into the same house folders. That includes back
+'   charges that were skipped because they are already in the Registry.
 ' ============================================================================
 Option Explicit
 
 Private Const LOADING_FOLDER As String = "P:\Indianapolis\IT STUFF FOR INDY\BACK CHARGES\LOADING FOLDER\"
 Private Const IMPORT_FILE As String = "BC_Import_Ready.xlsx"
+Private Const SHEETS_TAB As String = "Accounting Sheets"
 Private Const G_DRIVE_ROOT As String = "G:\Mandi\Safety\Incident Investigations\2026 Incidents\Builder backcharges, 2026\"
 
 Private Const DATA_SHEET As String = "Back Charge Data"
@@ -96,17 +102,15 @@ Public Sub CreatePropertyDamagePDFs()
     Dim i As Long, lastRow As Long, made As Long, filed As Long, missingRows As Long
     Dim reused As Long, created As Long
     Dim pFolder As String, gFolder As String, fileName As String, failures As String
-    Dim houses As Collection, newFolder As String, matchFolder As String
+    Dim houses As Collection
     Dim jobAddr As String, subDiv As String, lotNum As String, filePrefix As String
     Dim builderName As String, jobID As String, poNum As String
+    Dim hasRows As Boolean, acctFiled As Long
 
     Set wsData = ThisWorkbook.Sheets(DATA_SHEET)
     Set wsReport = ThisWorkbook.Sheets(REPORT_SHEET)
     lastRow = LastUsedRow(wsData)
-    If lastRow < FIRST_ROW Then
-        MsgBox "Back Charge Data has no rows to print.", vbInformation, "Property Damage PDFs"
-        Exit Sub
-    End If
+    hasRows = (lastRow >= FIRST_ROW)    ' no rows: still file the accounting sheets
 
     For i = FIRST_ROW To lastRow
         If RowHasColor(wsData, i, COLOR_MISSING) Then missingRows = missingRows + 1
@@ -122,7 +126,8 @@ Public Sub CreatePropertyDamagePDFs()
         Set houses = LoadHouseFolders()
     Else
         MsgBox "Cannot reach the G: drive folder:" & vbNewLine & G_DRIVE_ROOT & vbNewLine & vbNewLine & _
-               "The PDFs will be saved on P: only.", vbExclamation, "Property Damage PDFs"
+               "The PDFs will be saved on P: only, and the accounting sheets will not be filed.", _
+               vbExclamation, "Property Damage PDFs"
     End If
 
     ' Keep the sheet's buttons off the PDF
@@ -183,21 +188,8 @@ Public Sub CreatePropertyDamagePDFs()
         If Dir(pFolder & fileName) <> "" Then
             made = made + 1
             If Not houses Is Nothing Then
-                ' Same house (builder + address, or builder + lot/subdivision), any date
-                newFolder = JobFolderName(wsData, i)
-                matchFolder = FindHouseFolder(houses, newFolder)
+                gFolder = HouseFolder(houses, JobFolderName(wsData, i), reused, created)
                 On Error Resume Next
-                If matchFolder <> "" Then
-                    gFolder = G_DRIVE_ROOT & matchFolder & "\"
-                    reused = reused + 1
-                Else
-                    gFolder = G_DRIVE_ROOT & newFolder & "\"
-                    MkDir gFolder
-                    If Err.Number = 0 Then
-                        houses.Add ParseFolder(newFolder)
-                        created = created + 1
-                    End If
-                End If
                 FileCopy pFolder & fileName, gFolder & fileName
                 If Err.Number = 0 Then
                     filed = filed + 1
@@ -212,15 +204,83 @@ Public Sub CreatePropertyDamagePDFs()
         End If
     Next i
 
+    If Not houses Is Nothing Then
+        Application.StatusBar = "Filing accounting sheets..."
+        FileAccountingSheets houses, acctFiled, reused, created, failures
+    End If
+
     Application.StatusBar = False
     Application.EnableEvents = True
     Application.ScreenUpdating = True
 
-    MsgBox "PDFs created on P: " & made & vbNewLine & _
-           "Filed into G: job folders: " & filed & _
-           "  (existing house folders: " & reused & ", new folders: " & created & ")" & _
+    MsgBox IIf(hasRows, "", "Back Charge Data has no rows, so no property damage PDFs were made." & vbNewLine & vbNewLine) & _
+           "Property damage PDFs created on P: " & made & vbNewLine & _
+           "Property damage PDFs filed into G: " & filed & vbNewLine & _
+           "Accounting sheets filed into G: " & acctFiled & vbNewLine & _
+           "(existing house folders used: " & reused & ", new folders: " & created & ")" & _
            IIf(failures <> "", vbNewLine & vbNewLine & "Problems:" & failures, ""), _
            IIf(failures = "", vbInformation, vbExclamation), "Property Damage PDFs"
+End Sub
+
+' ----------------------------------------------------------------------------
+' The house's G: drive folder (existing one if found, else newly created) with "\" on the end
+Private Function HouseFolder(houses As Collection, ByVal newFolder As String, _
+                             ByRef reused As Long, ByRef created As Long) As String
+    Dim matchFolder As String
+    matchFolder = FindHouseFolder(houses, newFolder)
+    If matchFolder <> "" Then
+        reused = reused + 1
+        HouseFolder = G_DRIVE_ROOT & matchFolder & "\"
+    Else
+        On Error Resume Next
+        MkDir G_DRIVE_ROOT & newFolder
+        If Err.Number = 0 Then
+            houses.Add ParseFolder(newFolder)
+            created = created + 1
+        End If
+        On Error GoTo 0
+        HouseFolder = G_DRIVE_ROOT & newFolder & "\"
+    End If
+End Function
+
+' Copies each split accounting sheet listed on the Accounting Sheets tab into its house folder
+Private Sub FileAccountingSheets(houses As Collection, ByRef acctFiled As Long, _
+                                 ByRef reused As Long, ByRef created As Long, ByRef failures As String)
+    Dim src As Workbook, ws As Worksheet, r As Long, lastR As Long
+    Dim pdfPath As String, pdfName As String, gFolder As String, newFolder As String
+
+    If Dir(LOADING_FOLDER & IMPORT_FILE) = "" Then Exit Sub
+    Set src = Workbooks.Open(LOADING_FOLDER & IMPORT_FILE, ReadOnly:=True)
+    On Error Resume Next
+    Set ws = src.Sheets(SHEETS_TAB)
+    On Error GoTo 0
+    If ws Is Nothing Then src.Close SaveChanges:=False: Exit Sub   ' made by an older bc_import.py
+
+    lastR = ws.Cells(ws.Rows.Count, 3).End(xlUp).Row
+    For r = 2 To lastR
+        pdfPath = Trim(ws.Cells(r, 3).Value)                        ' C: Split PDF
+        If pdfPath <> "" Then
+            If Dir(pdfPath) = "" Then
+                failures = failures & vbNewLine & ws.Cells(r, 1).Value & ": accounting sheet PDF not found"
+            Else
+                pdfName = Mid(pdfPath, InStrRev(pdfPath, "\") + 1)
+                ' H lot, G subdivision, F address, I deduction date, D builder
+                newFolder = FolderNameFrom(ws.Cells(r, 8).Value, ws.Cells(r, 7).Value, ws.Cells(r, 6).Value, _
+                                           ws.Cells(r, 9).Value, ws.Cells(r, 4).Value)
+                gFolder = HouseFolder(houses, newFolder, reused, created)
+                On Error Resume Next
+                FileCopy pdfPath, gFolder & pdfName
+                If Err.Number = 0 Then
+                    acctFiled = acctFiled + 1
+                Else
+                    failures = failures & vbNewLine & ws.Cells(r, 1).Value & " accounting sheet: " & Err.Description
+                End If
+                Err.Clear
+                On Error GoTo 0
+            End If
+        End If
+    Next r
+    src.Close SaveChanges:=False
 End Sub
 
 ' ----------------------------------------------------------------------------
@@ -439,19 +499,25 @@ End Function
 
 ' "2 HICKORY RUN, 10109 BITTERNUT RUN LANE, 10-19-2026, MI HOMES"
 Private Function JobFolderName(ws As Worksheet, r As Long) As String
-    Dim lotSub As String, addr As String, dt As String, parts As String
+    JobFolderName = FolderNameFrom(ws.Cells(r, "F").Value, ws.Cells(r, "E").Value, ws.Cells(r, "D").Value, _
+                                   ws.Cells(r, "I").Value, ws.Cells(r, "A").Value)
+End Function
 
-    lotSub = UCase(Trim(Trim(ws.Cells(r, "F").Value) & " " & Trim(ws.Cells(r, "E").Value)))
-    addr = ExpandStreet(UCase(Trim(ws.Cells(r, "D").Value)))
-    If IsDate(ws.Cells(r, "I").Value) Then
-        dt = Format(CDate(ws.Cells(r, "I").Value), "m-d-yyyy")
+Private Function FolderNameFrom(ByVal lot As Variant, ByVal subDiv As Variant, ByVal addr As Variant, _
+                                ByVal dedDate As Variant, ByVal builder As Variant) As String
+    Dim lotSub As String, a As String, dt As String, parts As String
+
+    lotSub = UCase(Trim(Trim(CStr(lot)) & " " & Trim(CStr(subDiv))))
+    a = ExpandStreet(UCase(Trim(CStr(addr))))
+    If IsDate(dedDate) Then
+        dt = Format(CDate(dedDate), "m-d-yyyy")
     Else
         dt = "NO DEDUCTION DATE"
     End If
 
     If lotSub <> "" Then parts = lotSub & ", "
-    If addr <> "" Then parts = parts & addr & ", "
-    JobFolderName = CleanName(parts & dt & ", " & FolderBuilder(ws.Cells(r, "A").Value))
+    If a <> "" Then parts = parts & a & ", "
+    FolderNameFrom = CleanName(parts & dt & ", " & FolderBuilder(CStr(builder)))
 End Function
 
 Private Function CleanName(ByVal s As String) As String

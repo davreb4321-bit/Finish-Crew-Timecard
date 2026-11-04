@@ -8,6 +8,8 @@ Back Charge Data and the old Property Damage PDF macro.
 1. Drop the accounting PDFs into the loading folder
    (`P:\Indianapolis\IT STUFF FOR INDY\BACK CHARGES\LOADING FOLDER`).
 2. Double-click `run_import.bat`. It writes `BC_Import_Ready.xlsx` into the loading folder.
+   It also saves each back charge (accounting page + the builder's pages behind it) as its own PDF in
+   `LOADING FOLDER\Accounting Sheets`, including back charges skipped because they're already in the Registry.
 3. In the tracking workbook, click **Import Back Charges**. Rows land in Back Charge Data from row 10.
    - **Yellow** cells are suggestions (drop-downs, incident date, responsible person from an earlier back charge on the same job). Confirm or change them.
    - **Orange** cells could not be found. Fill them in.
@@ -17,11 +19,12 @@ Back Charge Data and the old Property Damage PDF macro.
    `G:\Mandi\Safety\Incident Investigations\2026 Incidents\Builder backcharges, 2026\<Lot> <Subdivision>, <Address>, <Deduction Date>, <Builder>`.
    If the house already has a folder (any date), the PDF goes into it; otherwise a new folder is created.
    Same house = same builder and the same street address (or the same lot and subdivision), using the glossary below.
+   The same button then files every split accounting sheet into its house folder, even when Back Charge Data is empty.
 
 ## One-time setup
 
 ```bash
-pip install pandas pyxlsb openpyxl pdfplumber
+pip install pandas pyxlsb openpyxl pdfplumber pypdf
 ```
 
 Put `bc_import.py` and `run_import.bat` in the same folder.

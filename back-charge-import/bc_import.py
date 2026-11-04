@@ -21,9 +21,14 @@ What it fills in:
 
 Back charges already in the Registry are left out and listed on the Review tab.
 
+Each back charge's pages (accounting sheet + the builder's pages behind it) are
+also saved as their own PDF in the "Accounting Sheets" folder inside the
+loading folder, including the ones already in the Registry. The PDF macro
+files them into the house's G: drive folder.
+
 Usage
 -----
-    pip install pandas pyxlsb openpyxl pdfplumber
+    pip install pandas pyxlsb openpyxl pdfplumber pypdf
     python bc_import.py
     python bc_import.py --folder "D:/some/other/folder" --workbook "D:/tracking.xlsb"
 
@@ -42,6 +47,7 @@ from pathlib import Path
 
 import pandas as pd
 import pdfplumber
+from pypdf import PdfReader, PdfWriter
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from pyxlsb import open_workbook
@@ -52,6 +58,7 @@ from pyxlsb import open_workbook
 LOADING_FOLDER = r"P:\Indianapolis\IT STUFF FOR INDY\BACK CHARGES\LOADING FOLDER"
 TRACKING_WORKBOOK = os.path.join(LOADING_FOLDER, "2026 BACK CHARGE TRACKING.xlsb")
 OUTPUT_FILE_NAME = "BC_Import_Ready.xlsx"
+SPLIT_FOLDER_NAME = "Accounting Sheets"   # inside the loading folder
 
 DEFAULT_RESPONDENT = "David Martin"   # column V
 SUGGEST_NEIGHBOURS = 7                # how many similar past notes vote on each suggestion
@@ -203,21 +210,22 @@ def load_reference(path):
 # --------------------------------------------------------------------------
 # PDF text
 # --------------------------------------------------------------------------
-def pdf_text(path):
+def pdf_pages(path):
+    """Text of each page (OCR when the PDF has no text layer)."""
     with pdfplumber.open(path) as pdf:
-        text = "\n".join(page.extract_text(layout=True) or "" for page in pdf.pages)
-    if text.strip():
-        return text
-    return ocr_text(path)
+        pages = [page.extract_text(layout=True) or "" for page in pdf.pages]
+    if any(p.strip() for p in pages):
+        return pages
+    return ocr_pages(path)
 
 
-def ocr_text(path):
+def ocr_pages(path):
     """Fallback for scanned PDFs. Needs pytesseract + Tesseract installed."""
     try:
         import pytesseract
     except ImportError:
         print("    No text layer and pytesseract is not installed; skipping.")
-        return ""
+        return []
     for exe in (r"C:\Users\DMartin\AppData\Local\Programs\Tesseract-OCR\tesseract.exe",
                 r"C:\Program Files\Tesseract-OCR\tesseract.exe",
                 r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"):
@@ -227,11 +235,11 @@ def ocr_text(path):
     print("    No text layer, running OCR...")
     try:
         with pdfplumber.open(path) as pdf:
-            return "\n".join(pytesseract.image_to_string(p.to_image(resolution=300).original)
-                             for p in pdf.pages)
+            return [pytesseract.image_to_string(p.to_image(resolution=300).original)
+                    for p in pdf.pages]
     except Exception as e:                         # Tesseract missing or failed
         print(f"    OCR failed: {e}")
-        return ""
+        return []
 
 
 def one_line(s):
@@ -263,44 +271,57 @@ def to_amount(s):
         return None
 
 
-def parse_entries(text):
-    """One entry per accounting page; the builder's page(s) ride along until the next one."""
-    chunks = re.split(r"(?=BACKCHARGE\s*/\s*PO#)", text, flags=re.IGNORECASE)
-    out = []
-    for chunk in chunks:
-        if not re.search(r"BACKCHARGE\s*/\s*PO#", chunk, re.IGNORECASE):
-            continue
-        # Accounting page ends at APPROVAL; everything after is the builder's paperwork
-        split = re.split(r"\n\s*APPROVAL\s*\n", chunk, maxsplit=1, flags=re.IGNORECASE)
-        acct, builder = split[0], (split[1] if len(split) > 1 else "")
+ACCOUNTING_START = re.compile(r"BACKCHARGE\s*/\s*PO#", re.IGNORECASE)
 
-        notes = re.search(r"NOTES:\s*(.*?)(?=ACTION\s+TO\s+BE\s+TAKEN|CHARGE\s+TO\s+SUB|$)",
-                          acct, re.IGNORECASE | re.DOTALL)
-        e = {
-            "po": find(r"BACKCHARGE\s*/\s*PO#\s*(\d{4,10})", acct),
-            "posting": to_date(find(r"\bDATE\s+(\d{1,2}/\d{1,2}/\d{2,4})", acct)),
-            "division": find(r"DIVISION\s+([A-Z]+)", acct),
-            "builder_pdf": find(r"BUILDER\s+NAME\s+(.+)", acct),
-            "customer": (find(r"CUSTOMER\s*#\s*([A-Z0-9]+)", acct) or "").upper() or None,
-            "address_pdf": find(r"JOB\s+ADDRESS\s+(.+)", acct),
-            "amount": to_amount(find(r"AMOUNT\s+OF\s+BACK\s+CHARGE:?\s*(\(?\$?\s*[\d,]+\.?\d{0,2}\)?)", acct)),
-            "job": (find(r"JOB\s*#\s*(N\d{5,9})", acct) or "").upper() or None,
-            "inv": find(r"INV\s*#\s*(\d{5,12})", acct),
-            "check": find(r"CHECK\s*#\s*([A-Z0-9-]+)", acct),
-            "deposit": to_date(find(r"DEPOSIT\s+DATE:?\s*(\d{1,2}/\d{1,2}/\d{2,4})", acct)),
-            "notes": one_line(notes.group(1)) if notes else "",
-            # Builder page (layout differs by builder; each field is optional)
-            "builder_date": to_date(find(r"\bDate:\s*(\d{1,2}/\d{1,2}/\d{2,4})", builder)),
-            "activity": find(r"Activity:\s*(.+)", builder),
-            "builder_desc": find(r"Description:\s*(.+)", builder),
-            "lot_pdf": find(r"Lot\s*#?\s*:?\s*([0-9]+[A-Z]?)\b", builder),
-        }
-        if e["builder_pdf"]:
-            e["builder_pdf"] = re.split(r"\s{2,}", e["builder_pdf"])[0]
-        if e["address_pdf"]:
-            e["address_pdf"] = re.split(r"\s{2,}", e["address_pdf"])[0]
+
+def parse_entries(pages):
+    """One entry per accounting sheet. A sheet starts on a page with BACKCHARGE/PO#; the
+    builder's page(s) after it belong to it until the next one starts."""
+    groups = []
+    for i, page in enumerate(pages):
+        if ACCOUNTING_START.search(page):
+            groups.append([i])
+        elif groups:
+            groups[-1].append(i)
+    out = []
+    for g in groups:
+        e = parse_chunk("\n".join(pages[i] for i in g))
+        e["pages"] = g
         out.append(e)
     return out
+
+
+def parse_chunk(chunk):
+    # Accounting page ends at APPROVAL; everything after is the builder's paperwork
+    split = re.split(r"\n\s*APPROVAL\s*\n", chunk, maxsplit=1, flags=re.IGNORECASE)
+    acct, builder = split[0], (split[1] if len(split) > 1 else "")
+
+    notes = re.search(r"NOTES:\s*(.*?)(?=ACTION\s+TO\s+BE\s+TAKEN|CHARGE\s+TO\s+SUB|$)",
+                      acct, re.IGNORECASE | re.DOTALL)
+    e = {
+        "po": find(r"BACKCHARGE\s*/\s*PO#\s*(\d{4,10})", acct),
+        "posting": to_date(find(r"\bDATE\s+(\d{1,2}/\d{1,2}/\d{2,4})", acct)),
+        "division": find(r"DIVISION\s+([A-Z]+)", acct),
+        "builder_pdf": find(r"BUILDER\s+NAME\s+(.+)", acct),
+        "customer": (find(r"CUSTOMER\s*#\s*([A-Z0-9]+)", acct) or "").upper() or None,
+        "address_pdf": find(r"JOB\s+ADDRESS\s+(.+)", acct),
+        "amount": to_amount(find(r"AMOUNT\s+OF\s+BACK\s+CHARGE:?\s*(\(?\$?\s*[\d,]+\.?\d{0,2}\)?)", acct)),
+        "job": (find(r"JOB\s*#\s*(N\d{5,9})", acct) or "").upper() or None,
+        "inv": find(r"INV\s*#\s*(\d{5,12})", acct),
+        "check": find(r"CHECK\s*#\s*([A-Z0-9-]+)", acct),
+        "deposit": to_date(find(r"DEPOSIT\s+DATE:?\s*(\d{1,2}/\d{1,2}/\d{2,4})", acct)),
+        "notes": one_line(notes.group(1)) if notes else "",
+        # Builder page (layout differs by builder; each field is optional)
+        "builder_date": to_date(find(r"\bDate:\s*(\d{1,2}/\d{1,2}/\d{2,4})", builder)),
+        "activity": find(r"Activity:\s*(.+)", builder),
+        "builder_desc": find(r"Description:\s*(.+)", builder),
+        "lot_pdf": find(r"Lot\s*#?\s*:?\s*([0-9]+[A-Z]?)\b", builder),
+    }
+    if e["builder_pdf"]:
+        e["builder_pdf"] = re.split(r"\s{2,}", e["builder_pdf"])[0]
+    if e["address_pdf"]:
+        e["address_pdf"] = re.split(r"\s{2,}", e["address_pdf"])[0]
+    return e
 
 
 # --------------------------------------------------------------------------
@@ -370,6 +391,53 @@ class Suggester:
 # --------------------------------------------------------------------------
 # Build rows
 # --------------------------------------------------------------------------
+def find_house(e, prod, builder_ids):
+    """PRODUCTION DATA row for the back charge: by job #, else by address (+ builder).
+    Returns (row or None, job #, builder from the PDF, notes, job found by address?)."""
+    notes = []
+    job = e["job"]
+    pdf_builder = builder_name(builder_ids.get(e["customer"] or ""), e["builder_pdf"], e["file"])
+    p = prod.loc[job] if job and job in prod.index else None
+    by_address = False
+    if p is None:
+        key = address_key(e["address_pdf"])
+        hits = prod[prod["_addr"] == key] if key else prod.iloc[0:0]
+        if pdf_builder and len(hits) > 1:
+            hits = hits[hits["_builder"] == pdf_builder]
+        if len(hits) == 1:
+            p = hits.iloc[0]
+            notes.append(f"Job {job or '(none on PDF)'} not in PRODUCTION DATA; "
+                         f"matched by address to {hits.index[0]}")
+            job, by_address = hits.index[0], True
+        else:
+            notes.append(f"Job {job or '(none on PDF)'} not found in PRODUCTION DATA"
+                         + (f"; {len(hits)} jobs share this address" if len(hits) > 1 else ""))
+    return p, job, pdf_builder, notes, by_address
+
+
+def prod_value(p, col):
+    v = None if p is None else p.get(col)
+    if v is None or pd.isna(v):
+        return None
+    if isinstance(v, float) and v.is_integer():    # lot 24.0 -> "24"
+        v = int(v)
+    return str(v).strip()
+
+
+def house_record(e, prod, builder_ids, status):
+    """One row of the Accounting Sheets tab: where the split PDF should be filed."""
+    p, job, pdf_builder, _, _ = find_house(e, prod, builder_ids)
+    po = f"BC-{e['po']}" if e["po"] else None
+    return {
+        "PO/Back Charge #": po, "Status": status, "Split PDF": e.get("split_pdf"),
+        "Builder Name": prod_value(p, "Builder") or pdf_builder or e["builder_pdf"],
+        "Job #": job, "Job Address": prod_value(p, "Address") or e["address_pdf"],
+        "Subdivision": prod_value(p, "Subdivision"),
+        "Lot Number": prod_value(p, "Lot") or e["lot_pdf"],
+        "Deduction Date": e["deposit"],
+    }
+
+
 def build_rows(entries, prod, reg, lists, builder_ids):
     existing = set(reg["PO#/Backcharge #"].dropna().astype(str).str.strip().str.upper())
     person_by_job = (reg[reg["Responsible Person"].notna()]
@@ -377,44 +445,27 @@ def build_rows(entries, prod, reg, lists, builder_ids):
                      .groupby("job")["Responsible Person"].agg(lambda s: s.mode().iat[0]))
     sug = Suggester(reg, lists)
 
-    rows, review, seen = [], [], set()
+    rows, review, sheets, seen = [], [], [], set()
     for e in entries:
         po = f"BC-{e['po']}" if e["po"] else None
         if po and (po.upper() in existing or po.upper() in seen):
+            reason = "Already in the Registry" if po.upper() in existing else "Appears twice in the PDFs"
             review.append({"PO/Back Charge #": po, "Source PDF": e["file"], "Status": "Skipped",
-                           "Notes": "Already in the Registry" if po.upper() in existing
-                           else "Appears twice in the PDFs"})
+                           "Notes": reason})
+            if po.upper() in existing:     # still needs its accounting sheet filed
+                sheets.append(house_record(e, prod, builder_ids, reason))
             continue
         seen.add((po or "").upper())
+        sheets.append(house_record(e, prod, builder_ids, "Imported"))
 
         row = {c: None for c in COLUMNS}
-        guessed, missing, notes = set(), set(), []
-        job = e["job"]
-        pdf_builder = builder_name(builder_ids.get(e["customer"] or ""), e["builder_pdf"], e["file"])
-        p = prod.loc[job] if job and job in prod.index else None
-        if p is None:
-            # No job # match: look the house up by address (and builder) instead
-            key = address_key(e["address_pdf"])
-            hits = prod[prod["_addr"] == key] if key else prod.iloc[0:0]
-            if pdf_builder and len(hits) > 1:
-                hits = hits[hits["_builder"] == pdf_builder]
-            if len(hits) == 1:
-                p = hits.iloc[0]
-                notes.append(f"Job {job or '(none on PDF)'} not in PRODUCTION DATA; "
-                             f"matched by address to {hits.index[0]}")
-                job = hits.index[0]
-                guessed.add("Job #")
-            else:
-                notes.append(f"Job {job or '(none on PDF)'} not found in PRODUCTION DATA"
-                             + (f"; {len(hits)} jobs share this address" if len(hits) > 1 else ""))
+        guessed, missing = set(), set()
+        p, job, pdf_builder, notes, by_address = find_house(e, prod, builder_ids)
+        if by_address:
+            guessed.add("Job #")
 
         def pval(col):
-            v = None if p is None else p.get(col)
-            if v is None or pd.isna(v):
-                return None
-            if isinstance(v, float) and v.is_integer():    # lot 24.0 -> "24"
-                v = int(v)
-            return str(v).strip()
+            return prod_value(p, col)
 
         row["Builder Name"] = pval("Builder") or pdf_builder or e["builder_pdf"]
         row["Job #"] = job
@@ -470,13 +521,37 @@ def build_rows(entries, prod, reg, lists, builder_ids):
             "Most similar past notes": " || ".join(similar),
             "Notes": "; ".join(notes),
         })
-    return rows, review
+    return rows, review, sheets
+
+
+def split_sheets(entries, folder, out_folder):
+    """Save each back charge's pages as its own PDF. Sets e["split_pdf"]."""
+    out_folder.mkdir(exist_ok=True)
+    by_file = defaultdict(list)
+    for e in entries:
+        by_file[e["file"]].append(e)
+    made = 0
+    for fname, es in by_file.items():
+        reader = PdfReader(str(folder / fname))
+        for e in es:
+            po = f"BC-{e['po']}" if e["po"] else Path(fname).stem
+            addr = plain(e["address_pdf"]) or "NO ADDRESS"
+            name = re.sub(r'[\\/:*?"<>|]', "-", f"{po} - {addr} - ACCOUNTING SHEET.pdf")
+            writer = PdfWriter()
+            for i in e["pages"]:
+                writer.add_page(reader.pages[i])
+            path = out_folder / name
+            with open(path, "wb") as fh:
+                writer.write(fh)
+            e["split_pdf"] = str(path.resolve())
+            made += 1
+    return made
 
 
 # --------------------------------------------------------------------------
 # Output
 # --------------------------------------------------------------------------
-def write_output(rows, review, path):
+def write_output(rows, review, sheets, path):
     wb = Workbook()
     ws = wb.active
     ws.title = "Back Charge Data"
@@ -513,6 +588,19 @@ def write_output(rows, review, path):
     for j, w in enumerate([16, 16, 34, 28, 60, 80, 50], start=1):
         rv.column_dimensions[rv.cell(row=1, column=j).column_letter].width = w
 
+    acc = wb.create_sheet("Accounting Sheets")
+    cols = ["PO/Back Charge #", "Status", "Split PDF", "Builder Name", "Job #", "Job Address",
+            "Subdivision", "Lot Number", "Deduction Date"]
+    acc.append(cols)
+    for c in acc[1]:
+        c.font = Font(bold=True)
+    for item in sheets:
+        acc.append([item.get(k) for k in cols])
+        if item.get("Deduction Date"):
+            acc.cell(row=acc.max_row, column=9).number_format = "m/d/yyyy"
+    for j, w in enumerate([16, 24, 90, 24, 12, 26, 20, 10, 14], start=1):
+        acc.column_dimensions[acc.cell(row=1, column=j).column_letter].width = w
+
     key = wb.create_sheet("Key")
     key.append(["Colour", "Meaning"])
     key.append(["Yellow", "Suggested from past back charges or the builder's page. Confirm or change it."])
@@ -542,15 +630,16 @@ def main():
     pdfs = sorted(f for f in folder.iterdir() if f.suffix.lower() == ".pdf")
     print(f"\nFound {len(pdfs)} PDF file(s) in {folder}")
     for f in pdfs:
-        found = parse_entries(pdf_text(f))
+        found = parse_entries(pdf_pages(f))
         for e in found:
             e["file"] = f.name
         print(f"  {f.name}: {len(found)} back charge(s)")
         entries.extend(found)
 
-    rows, review = build_rows(entries, prod, reg, lists, builder_ids)
+    split_count = split_sheets(entries, folder, folder / SPLIT_FOLDER_NAME)
+    rows, review, sheets = build_rows(entries, prod, reg, lists, builder_ids)
     try:
-        write_output(rows, review, out)
+        write_output(rows, review, sheets, out)
     except PermissionError:
         sys.exit(f"\nCould not save {out}. Close it in Excel and run again.")
 
@@ -559,6 +648,8 @@ def main():
     gaps = sum(len(m) for _, _, m in rows)
     print(f"\nReady to import: {len(rows)}   Skipped (already in Registry or repeated): {skipped}")
     print(f"Cells to confirm (yellow): {guesses}   Cells to fill (orange): {gaps}")
+    print(f"Accounting sheets split into their own PDFs: {split_count} "
+          f"(in {folder / SPLIT_FOLDER_NAME})")
     print(f"Saved {out}")
 
 
