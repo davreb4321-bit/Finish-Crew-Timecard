@@ -78,6 +78,88 @@ SUGGESTED = {
 GUESS_FILL = PatternFill("solid", fgColor="FFF2A8")     # yellow: please confirm
 MISSING_FILL = PatternFill("solid", fgColor="F8CBAD")   # orange: could not be found
 
+# --------------------------------------------------------------------------
+# Glossary (keep in step with the glossary in BackChargeImport.bas)
+# --------------------------------------------------------------------------
+# Builders: (name used in the Registry / PRODUCTION DATA, [text that identifies it]).
+# A builder matches when its text is CONTAINED anywhere in the name being read, after
+# capitals, punctuation and extra spaces are ignored ("M.I. Homes" -> "M I HOMES").
+# Longer, more specific entries go first.
+BUILDERS = [
+    ("PULTE HOMES OF INDIANA", ["PULTE"]),
+    ("M.I. HOMES", ["M I HOMES", "MI HOMES", "M I SCHOTTENSTEIN"]),
+    ("ARBOR HOMES", ["ARBOR"]),
+    ("FISCHER MANAGEMENT", ["FISCHER", "FISHER HOMES", "FISHER MANAGEMENT"]),
+    ("EC NEW VISION INDIANA", ["EC NEW VISION", "NEW VISION"]),
+    ("LENNAR", ["LENNAR"]),
+    ("BEAZER", ["BEAZER"]),
+    ("RYAN HOMES", ["RYAN HOMES"]),
+    ("DREES PREMIER HOMES", ["DREES"]),
+    ("D. R. HORTON", ["HORTON"]),
+    ("DAVID WEEKLEY", ["WEEKLEY"]),
+    ("ESTRIDGE HOMES", ["ESTRIDGE"]),
+    ("SILVERTHORNE HOMES", ["SILVERTHORNE"]),
+    ("TAYLOR MORRISON", ["TAYLOR MORRISON"]),
+    ("DAVIS BUILDING GROUP LLC", ["DAVIS BUILDING", "DAVIS BLDG"]),   # not "DAVIS": Paul Davis is a restoration company
+    ("TWG WHISLETT GROUP", ["WHISLETT", "TWG"]),
+    ("WESTPORT", ["WESTPORT"]),
+    ("BEACON BUILDERS LLC", ["BEACON BUILDERS"]),
+    ("BEDROCK BUILDERS, INC.", ["BEDROCK"]),
+    ("Old Town Design Group", ["OLD TOWN"]),
+    ("PRIDE ONE", ["PRIDE ONE"]),
+    ("JOYNER HOMES LLC", ["JOYNER"]),
+    ("ONYX AND EAST LLC", ["ONYX"]),
+]
+
+# Street words: every spelling on the left of each list means the word on the right.
+STREET_WORDS = {
+    "LANE": ["LN", "LA"], "STREET": ["ST", "STR"], "DRIVE": ["DR", "DRV"],
+    "COURT": ["CT", "CRT"], "AVENUE": ["AVE", "AV"], "ROAD": ["RD"], "PLACE": ["PL"],
+    "CIRCLE": ["CIR", "CIRC"], "BOULEVARD": ["BLVD", "BL"], "TRAIL": ["TRL", "TR"],
+    "PARKWAY": ["PKWY", "PKY"], "TERRACE": ["TER", "TERR"], "WAY": ["WY"],
+    "POINTE": ["PT", "POINT"], "CROSSING": ["XING", "CRSG"], "COVE": ["CV"],
+    "SQUARE": ["SQ"], "HIGHWAY": ["HWY"], "BEND": ["BND"], "GLEN": ["GLN"],
+    "HOLLOW": ["HOLW"], "CREEK": ["CRK"], "RIDGE": ["RDG"], "COMMONS": ["CMNS"],
+    "MEADOWS": ["MDWS"], "TRACE": ["TRCE"], "RUN": [], "PASS": [], "PIKE": [], "LOOP": [],
+    "ROW": [], "WALK": [], "PATH": [], "VIEW": ["VW"], "CHASE": [],
+    "NORTH": ["N"], "SOUTH": ["S"], "EAST": ["E"], "WEST": ["W"],
+}
+DIRECTIONS = {"NORTH", "SOUTH", "EAST", "WEST"}
+_STREET_LOOKUP = {v: k for k, vs in STREET_WORDS.items() for v in vs + [k]}
+
+
+def plain(text):
+    """Upper case, punctuation to spaces, single spaces."""
+    return re.sub(r"\s+", " ", re.sub(r"[^A-Z0-9&]+", " ", str(text or "").upper())).strip()
+
+
+def builder_name(*texts):
+    """First glossary builder CONTAINED in any of the texts -> Registry spelling."""
+    for t in texts:
+        t = f" {plain(t)} "
+        if not t.strip():
+            continue
+        for name, variants in BUILDERS:
+            if any(f" {plain(v)} " in t for v in variants):
+                return name
+    return None
+
+
+def address_key(text):
+    """'793 Rosebud Ln.', '793 ROSEBUD LANE' and '793 Rosebud' -> '793 ROSEBUD'.
+    House number + street name. Street-type words at the end and a direction
+    right after the number are dropped, so a missing or abbreviated 'Lane' still
+    matches. At least one street word is always kept."""
+    words = [_STREET_LOOKUP.get(w, w) for w in plain(text).split()]
+    if len(words) < 2 or not words[0][0].isdigit():
+        return None
+    num, street = words[0], words[1:]
+    if len(street) > 1 and street[0] in DIRECTIONS:
+        street = street[1:]
+    while len(street) > 1 and street[-1] in STREET_WORDS:
+        street = street[:-1]
+    return f"{num} {' '.join(street)}"
+
 
 # --------------------------------------------------------------------------
 # Reading the tracking workbook (read-only)
@@ -94,6 +176,8 @@ def load_reference(path):
     prod = read_sheet(path, "PRODUCTION DATA", 7)
     prod["Job#"] = prod["Job#"].astype(str).str.strip().str.upper()
     prod = prod.drop_duplicates("Job#", keep="last").set_index("Job#")
+    prod["_addr"] = prod["Address"].map(address_key)
+    prod["_builder"] = prod["Builder"].map(lambda b: builder_name(b) or plain(b))
     print(f"  PRODUCTION DATA: {len(prod):,} jobs")
 
     reg = read_sheet(path, "Registry", 9)
@@ -306,9 +390,23 @@ def build_rows(entries, prod, reg, lists, builder_ids):
         row = {c: None for c in COLUMNS}
         guessed, missing, notes = set(), set(), []
         job = e["job"]
+        pdf_builder = builder_name(builder_ids.get(e["customer"] or ""), e["builder_pdf"], e["file"])
         p = prod.loc[job] if job and job in prod.index else None
-        if job and p is None:
-            notes.append(f"Job {job} not found in PRODUCTION DATA")
+        if p is None:
+            # No job # match: look the house up by address (and builder) instead
+            key = address_key(e["address_pdf"])
+            hits = prod[prod["_addr"] == key] if key else prod.iloc[0:0]
+            if pdf_builder and len(hits) > 1:
+                hits = hits[hits["_builder"] == pdf_builder]
+            if len(hits) == 1:
+                p = hits.iloc[0]
+                notes.append(f"Job {job or '(none on PDF)'} not in PRODUCTION DATA; "
+                             f"matched by address to {hits.index[0]}")
+                job = hits.index[0]
+                guessed.add("Job #")
+            else:
+                notes.append(f"Job {job or '(none on PDF)'} not found in PRODUCTION DATA"
+                             + (f"; {len(hits)} jobs share this address" if len(hits) > 1 else ""))
 
         def pval(col):
             v = None if p is None else p.get(col)
@@ -318,7 +416,7 @@ def build_rows(entries, prod, reg, lists, builder_ids):
                 v = int(v)
             return str(v).strip()
 
-        row["Builder Name"] = pval("Builder") or builder_ids.get(e["customer"] or "") or e["builder_pdf"]
+        row["Builder Name"] = pval("Builder") or pdf_builder or e["builder_pdf"]
         row["Job #"] = job
         row["Job Address"] = pval("Address") or e["address_pdf"]
         row["Subdivision"] = pval("Subdivision")

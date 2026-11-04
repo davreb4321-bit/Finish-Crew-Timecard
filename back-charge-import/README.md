@@ -15,8 +15,8 @@ Back Charge Data and the old Property Damage PDF macro.
 4. Click **Send to Registry** (unchanged).
 5. Click **Create Property Damage PDFs**. Each PDF is saved to today's dated folder on P: and filed into its G: drive job folder,
    `G:\Mandi\Safety\Incident Investigations\2026 Incidents\Builder backcharges, 2026\<Lot> <Subdivision>, <Address>, <Deduction Date>, <Builder>`.
-   If the house already has a folder (same lot, subdivision, address and builder; the date can differ), the PDF goes into it.
-   Otherwise a new folder is created. Case and extra spaces are ignored; everything else must match exactly.
+   If the house already has a folder (any date), the PDF goes into it; otherwise a new folder is created.
+   Same house = same builder and the same street address (or the same lot and subdivision), using the glossary below.
 
 ## One-time setup
 
@@ -35,6 +35,20 @@ In the tracking workbook:
 
 The import overwrites columns A-W from row 10 down with values, so the XLOOKUP formulas there are replaced.
 Drop-down lists stay in place.
+
+## Glossary
+
+Both files carry the same glossary. Keep them in step when you add to one.
+
+- **Builders** (`BUILDERS` in `bc_import.py`, `BuilderGlossary` in `BackChargeImport.bas`): each builder lists the text that
+  identifies it. A name matches when it *contains* that text, so "Fischer", "Fischer Homes" and "Fischer Home Management"
+  are all Fischer. Capitals, punctuation and extra spaces are ignored ("M.I. Homes" = "MI HOMES").
+- **Street words** (`STREET_WORDS` / `StreetGlossary`): Ln = Lane, St = Street, Dr = Drive, and so on. Addresses are compared
+  by house number and street name, so "793 Rosebud", "793 Rosebud Ln" and "793 ROSEBUD LANE" are the same house.
+
+The import script uses the glossary to name the builder when the job isn't in PRODUCTION DATA, and to find the job by
+address when the PDF's job # is missing or wrong (marked yellow). The PDF macro uses it to find a house's existing
+G: drive folder.
 
 ## Settings
 

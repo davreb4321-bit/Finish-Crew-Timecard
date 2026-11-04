@@ -13,9 +13,9 @@ Attribute VB_Name = "BackChargeImport"
 '   for each row, saves the PDF to today's folder in the P: drive loading
 '   folder, and files a copy straight into its G: drive job folder, named
 '   "<Lot> <Subdivision>, <Address>, <Deduction Date>, <Builder>".
-'   If the house already has a folder (same lot, subdivision, address and
-'   builder, any date), the PDF goes into that folder; otherwise a new one is
-'   created.
+'   If the house already has a folder (any date), the PDF goes into it;
+'   otherwise a new one is created. "Same house" uses the glossary below, so
+'   Ln/Lane, St/Street, Fischer/Fischer Homes etc. count as the same.
 ' ============================================================================
 Option Explicit
 
@@ -97,7 +97,7 @@ Public Sub CreatePropertyDamagePDFs()
     Dim i As Long, lastRow As Long, made As Long, filed As Long, missingRows As Long
     Dim reused As Long, created As Long
     Dim pFolder As String, gFolder As String, fileName As String, failures As String
-    Dim houses As Object, newFolder As String, key As String, folderDate As Date
+    Dim houses As Collection, newFolder As String, matchFolder As String
     Dim jobAddr As String, subDiv As String, lotNum As String, filePrefix As String
     Dim builderName As String, jobID As String, poNum As String
 
@@ -184,18 +184,18 @@ Public Sub CreatePropertyDamagePDFs()
         If Dir(pFolder & fileName) <> "" Then
             made = made + 1
             If Not houses Is Nothing Then
-                ' Same lot, subdivision, address and builder = same house, whatever the date
+                ' Same house (builder + address, or builder + lot/subdivision), any date
                 newFolder = JobFolderName(wsData, i)
-                key = HouseKey(newFolder, folderDate)
+                matchFolder = FindHouseFolder(houses, newFolder)
                 On Error Resume Next
-                If houses.Exists(key) Then
-                    gFolder = G_DRIVE_ROOT & houses.Item(key)(0) & "\"
+                If matchFolder <> "" Then
+                    gFolder = G_DRIVE_ROOT & matchFolder & "\"
                     reused = reused + 1
                 Else
                     gFolder = G_DRIVE_ROOT & newFolder & "\"
                     MkDir gFolder
                     If Err.Number = 0 Then
-                        houses.Add key, Array(newFolder, folderDate)
+                        houses.Add ParseFolder(newFolder)
                         created = created + 1
                     End If
                 End If
@@ -225,49 +225,217 @@ Public Sub CreatePropertyDamagePDFs()
 End Sub
 
 ' ----------------------------------------------------------------------------
-' Every folder already in the G: drive root, keyed by house (name minus the date).
-' When a house has more than one folder, the one with the latest date wins.
-Private Function LoadHouseFolders() As Object
-    Dim d As Object, nm As String, key As String, dt As Date
-
-    Set d = CreateObject("Scripting.Dictionary")
-    nm = Dir(G_DRIVE_ROOT & "*", vbDirectory)
-    Do While nm <> ""
-        If nm <> "." And nm <> ".." Then
-            If (GetAttr(G_DRIVE_ROOT & nm) And vbDirectory) = vbDirectory Then
-                key = HouseKey(nm, dt)
-                If Not d.Exists(key) Then
-                    d.Add key, Array(nm, dt)
-                ElseIf dt > d.Item(key)(1) Then
-                    d.Item(key) = Array(nm, dt)
-                End If
-            End If
-        End If
-        nm = Dir()
-    Loop
-    Set LoadHouseFolders = d
+' GLOSSARY (keep in step with the glossary in bc_import.py)
+'
+' Builders: "<name used in G: drive folder names>=<text that identifies it>|<more>"
+' A builder matches when any of its text is CONTAINED in the name being read.
+' Capitals, punctuation and extra spaces are ignored ("M.I. Homes" = "M I HOMES").
+' More specific entries go first. Add new builders or spellings here.
+Private Function BuilderGlossary() As String
+    Dim g As String
+    g = g & "PULTE=PULTE" & vbLf
+    g = g & "MI HOMES=M I HOMES|MI HOMES|M I SCHOTTENSTEIN" & vbLf
+    g = g & "ARBOR=ARBOR" & vbLf
+    g = g & "FISCHER HOMES=FISCHER|FISHER HOMES|FISHER MANAGEMENT" & vbLf
+    g = g & "EC NEW VISION=EC NEW VISION|NEW VISION" & vbLf
+    g = g & "LENNAR=LENNAR" & vbLf
+    g = g & "BEAZER=BEAZER" & vbLf
+    g = g & "RYAN HOMES=RYAN HOMES" & vbLf
+    g = g & "DREES=DREES" & vbLf
+    g = g & "DR HORTON=HORTON" & vbLf
+    g = g & "DAVID WEEKLEY=WEEKLEY" & vbLf
+    g = g & "ESTRIDGE=ESTRIDGE" & vbLf
+    g = g & "SILVERTHORNE=SILVERTHORNE" & vbLf
+    g = g & "TAYLOR MORRISON=TAYLOR MORRISON" & vbLf
+    g = g & "DAVIS=DAVIS BUILDING|DAVIS BLDG" & vbLf          ' not plain DAVIS: Paul Davis is a restoration company
+    g = g & "TWG WHISLETT=WHISLETT|TWG" & vbLf
+    g = g & "WESTPORT=WESTPORT" & vbLf
+    g = g & "BEACON BUILDERS=BEACON BUILDERS" & vbLf
+    g = g & "BEDROCK=BEDROCK" & vbLf
+    g = g & "OLD TOWN=OLD TOWN" & vbLf
+    g = g & "PRIDE ONE=PRIDE ONE" & vbLf
+    g = g & "JOYNER=JOYNER" & vbLf
+    g = g & "ONYX AND EAST=ONYX"
+    BuilderGlossary = g
 End Function
 
-' "60B PARKROSE, 793 ROSEBUD LANE, 10-23-2026, FISCHER HOMES"
-'   -> key "60B PARKROSE|793 ROSEBUD LANE|FISCHER HOMES", dt = 10/23/2026
-' Case and extra spaces are ignored; every other character must match.
-Private Function HouseKey(ByVal folderName As String, ByRef dt As Date) As String
-    Dim part As Variant, p As String, bits() As String, key As String
+' Street words: "<full word>=<abbreviation>|<abbreviation>"
+Private Function StreetGlossary() As String
+    Dim g As String
+    g = "LANE=LN|LA;STREET=ST|STR;DRIVE=DR|DRV;COURT=CT|CRT;AVENUE=AVE|AV;ROAD=RD;PLACE=PL;"
+    g = g & "CIRCLE=CIR|CIRC;BOULEVARD=BLVD|BL;TRAIL=TRL|TR;PARKWAY=PKWY|PKY;TERRACE=TER|TERR;WAY=WY;"
+    g = g & "POINTE=PT|POINT;CROSSING=XING|CRSG;COVE=CV;SQUARE=SQ;HIGHWAY=HWY;BEND=BND;GLEN=GLN;"
+    g = g & "HOLLOW=HOLW;CREEK=CRK;RIDGE=RDG;COMMONS=CMNS;MEADOWS=MDWS;TRACE=TRCE;RUN=;PASS=;PIKE=;"
+    g = g & "LOOP=;ROW=;WALK=;PATH=;VIEW=VW;CHASE=;NORTH=N;SOUTH=S;EAST=E;WEST=W"
+    StreetGlossary = g
+End Function
 
-    dt = 0
-    For Each part In Split(folderName, ",")
-        p = UCase(Trim(part))
-        Do While InStr(p, "  ") > 0
-            p = Replace(p, "  ", " ")
-        Loop
+Private Function StreetWords() As Object
+    Static d As Object
+    Dim entry As Variant, kv() As String, ab As Variant
+    If d Is Nothing Then
+        Set d = CreateObject("Scripting.Dictionary")
+        For Each entry In Split(StreetGlossary(), ";")
+            kv = Split(entry, "=")
+            d(kv(0)) = kv(0)
+            For Each ab In Split(kv(1), "|")
+                If ab <> "" Then d(ab) = kv(0)
+            Next ab
+        Next entry
+    End If
+    Set StreetWords = d
+End Function
+
+' Upper case, punctuation to spaces, single spaces: "M.I. Homes" -> "M I HOMES"
+Private Function Plain(ByVal s As String) As String
+    Dim i As Long, ch As String, out As String
+    s = UCase(s)
+    For i = 1 To Len(s)
+        ch = Mid(s, i, 1)
+        If ch Like "[A-Z0-9&]" Then out = out & ch Else out = out & " "
+    Next i
+    out = Trim(out)
+    Do While InStr(out, "  ") > 0
+        out = Replace(out, "  ", " ")
+    Loop
+    Plain = out
+End Function
+
+' Glossary builder CONTAINED in the text ("Fischer Home Management" -> "FISCHER HOMES"), or ""
+Private Function GlossaryBuilder(ByVal b As String) As String
+    Dim entry As Variant, kv() As String, v As Variant, t As String
+    t = " " & Plain(b) & " "
+    For Each entry In Split(BuilderGlossary(), vbLf)
+        kv = Split(entry, "=")
+        For Each v In Split(kv(1), "|")
+            If InStr(t, " " & Plain(CStr(v)) & " ") > 0 Then GlossaryBuilder = kv(0): Exit Function
+        Next v
+    Next entry
+End Function
+
+' Builder name as used in G: drive folder names
+Private Function FolderBuilder(ByVal b As String) As String
+    FolderBuilder = GlossaryBuilder(b)
+    If FolderBuilder = "" Then FolderBuilder = Plain(b)
+    If FolderBuilder = "" Then FolderBuilder = "NO BUILDER"
+End Function
+
+' "793 Rosebud Ln.", "793 ROSEBUD LANE", "793 Rosebud" -> "793 ROSEBUD"
+' House number + street name. Street-type words at the end and a direction after the
+' number are dropped so a missing or abbreviated "Lane" still matches.
+Private Function AddressKey(ByVal a As String) As String
+    Dim w() As String, i As Long, first As Long, last As Long, sw As Object, out As String
+    Set sw = StreetWords()
+    a = Plain(a)
+    If a = "" Then Exit Function
+    w = Split(a, " ")
+    If UBound(w) < 1 Or Not (Left(w(0), 1) Like "#") Then Exit Function
+    For i = 1 To UBound(w)
+        If sw.Exists(w(i)) Then w(i) = sw(w(i))
+    Next i
+    first = 1: last = UBound(w)
+    If last > first Then
+        If w(first) = "NORTH" Or w(first) = "SOUTH" Or w(first) = "EAST" Or w(first) = "WEST" Then first = first + 1
+    End If
+    Do While last > first
+        If Not sw.Exists(w(last)) Then Exit Do
+        last = last - 1
+    Loop
+    out = w(0)
+    For i = first To last
+        out = out & " " & w(i)
+    Next i
+    AddressKey = out
+End Function
+
+' "785 ROSEBUD LN" -> "785 ROSEBUD LANE" (last word, for new folder names)
+Private Function ExpandStreet(ByVal a As String) As String
+    Dim p As Long, lastWord As String, sw As Object
+    Set sw = StreetWords()
+    p = InStrRev(a, " ")
+    If p = 0 Then ExpandStreet = a: Exit Function
+    lastWord = Replace(Mid(a, p + 1), ".", "")
+    If sw.Exists(lastWord) Then lastWord = sw(lastWord)
+    ExpandStreet = Left(a, p) & lastWord
+End Function
+
+' ----------------------------------------------------------------------------
+' Folder name -> Array(name, builder, "|address keys|", lot/sub part, date)
+' "60B PARKROSE, 793 ROSEBUD LANE, 10-23-2026, FISCHER HOMES"
+Private Function ParseFolder(ByVal nm As String) As Variant
+    Dim part As Variant, p As String, bits() As String, dt As Date
+    Dim parts As New Collection, builder As String, keys As String, k As String, i As Long, bIdx As Long
+
+    For Each part In Split(nm, ",")
+        p = Trim(part)
         bits = Split(p, "-")
         If p Like "#*-#*-####" And UBound(bits) = 2 Then
             dt = DateSerial(Val(bits(2)), Val(bits(0)), Val(bits(1)))
         ElseIf p <> "" Then
-            key = key & IIf(key = "", "", "|") & p
+            parts.Add p
         End If
     Next part
-    HouseKey = key
+    If parts.Count = 0 Then ParseFolder = Array(nm, "", "|", "", dt): Exit Function
+
+    ' Builder: the last part, unless another part is a glossary builder
+    bIdx = parts.Count
+    For i = parts.Count To 1 Step -1
+        If GlossaryBuilder(parts(i)) <> "" Then bIdx = i: Exit For
+    Next i
+    If parts.Count = 1 Then bIdx = 0
+    If bIdx > 0 Then builder = FolderBuilder(parts(bIdx))
+
+    keys = "|"
+    For i = 1 To parts.Count
+        If i <> bIdx Then
+            k = AddressKey(parts(i))
+            If k <> "" Then keys = keys & k & "|"
+        End If
+    Next i
+    ParseFolder = Array(nm, builder, keys, Plain(parts(1)), dt)
+End Function
+
+' Every folder already in the G: drive root
+Private Function LoadHouseFolders() As Collection
+    Dim c As New Collection, nm As String
+    nm = Dir(G_DRIVE_ROOT & "*", vbDirectory)
+    Do While nm <> ""
+        If nm <> "." And nm <> ".." Then
+            If (GetAttr(G_DRIVE_ROOT & nm) And vbDirectory) = vbDirectory Then c.Add ParseFolder(nm)
+        End If
+        nm = Dir()
+    Loop
+    Set LoadHouseFolders = c
+End Function
+
+' Existing folder for the same house, or "" if none. Same house = same builder (by the
+' glossary) and the same address (by the glossary) or the same lot/subdivision. When a
+' house has several folders, the one with the latest date is used.
+Private Function FindHouseFolder(folders As Collection, ByVal newName As String) As String
+    Dim want As Variant, f As Variant, k As Variant, sameHouse As Boolean, bestDate As Date
+
+    want = ParseFolder(newName)
+    For Each f In folders
+        If SameBuilder(CStr(f(1)), CStr(want(1))) Then
+            sameHouse = False
+            For Each k In Split(want(2), "|")
+                If k <> "" Then
+                    If InStr(f(2), "|" & k & "|") > 0 Then sameHouse = True: Exit For
+                End If
+            Next k
+            If Not sameHouse And want(3) <> "" Then sameHouse = (f(3) = want(3))
+            If sameHouse And (FindHouseFolder = "" Or f(4) > bestDate) Then
+                FindHouseFolder = f(0)
+                bestDate = f(4)
+            End If
+        End If
+    Next f
+End Function
+
+' Builders not in the glossary still match when one name contains the other
+Private Function SameBuilder(ByVal a As String, ByVal b As String) As Boolean
+    If a = "" Or b = "" Then Exit Function
+    SameBuilder = (a = b) Or InStr(" " & a & " ", " " & b & " ") > 0 Or InStr(" " & b & " ", " " & a & " ") > 0
 End Function
 
 ' "2 HICKORY RUN, 10109 BITTERNUT RUN LANE, 10-19-2026, MI HOMES"
@@ -285,54 +453,6 @@ Private Function JobFolderName(ws As Worksheet, r As Long) As String
     If lotSub <> "" Then parts = lotSub & ", "
     If addr <> "" Then parts = parts & addr & ", "
     JobFolderName = CleanName(parts & dt & ", " & FolderBuilder(ws.Cells(r, "A").Value))
-End Function
-
-' Builder names as they appear on the G: drive folders. Add new builders here.
-Private Function FolderBuilder(ByVal b As String) As String
-    b = UCase(Trim(b))
-    Select Case True
-        Case b Like "*PULTE*": FolderBuilder = "PULTE"
-        Case b Like "*M.I.*", b Like "MI HOMES*", b Like "M I HOMES*": FolderBuilder = "MI HOMES"
-        Case b Like "*ARBOR*": FolderBuilder = "ARBOR"
-        Case b Like "*FISCHER*": FolderBuilder = "FISCHER HOMES"
-        Case b Like "*EC NEW VISION*": FolderBuilder = "EC NEW VISION"
-        Case b Like "*LENNAR*": FolderBuilder = "LENNAR"
-        Case b Like "*BEAZER*": FolderBuilder = "BEAZER"
-        Case b Like "*RYAN*": FolderBuilder = "RYAN HOMES"
-        Case b Like "*DREES*": FolderBuilder = "DREES"
-        Case b Like "*HORTON*": FolderBuilder = "DR HORTON"
-        Case b Like "*WEEKLEY*": FolderBuilder = "DAVID WEEKLEY"
-        Case b Like "*ESTRIDGE*": FolderBuilder = "ESTRIDGE"
-        Case b Like "*SILVERTHORNE*": FolderBuilder = "SILVERTHORNE"
-        Case b Like "*TAYLOR MORRISON*": FolderBuilder = "TAYLOR MORRISON"
-        Case b Like "*DAVIS*": FolderBuilder = "DAVIS"
-        Case b = "": FolderBuilder = "NO BUILDER"
-        Case Else: FolderBuilder = b
-    End Select
-End Function
-
-' "785 ROSEBUD LN" -> "785 ROSEBUD LANE" (last word only)
-Private Function ExpandStreet(ByVal a As String) As String
-    Dim p As Long, lastWord As String, full As String
-    p = InStrRev(a, " ")
-    If p = 0 Then ExpandStreet = a: Exit Function
-    lastWord = Replace(Mid(a, p + 1), ".", "")
-    Select Case lastWord
-        Case "LN": full = "LANE"
-        Case "DR": full = "DRIVE"
-        Case "CT": full = "COURT"
-        Case "ST": full = "STREET"
-        Case "AVE", "AV": full = "AVENUE"
-        Case "RD": full = "ROAD"
-        Case "PL": full = "PLACE"
-        Case "CIR": full = "CIRCLE"
-        Case "BLVD": full = "BOULEVARD"
-        Case "TRL": full = "TRAIL"
-        Case "PKWY": full = "PARKWAY"
-        Case "TER": full = "TERRACE"
-        Case Else: full = lastWord
-    End Select
-    ExpandStreet = Left(a, p) & full
 End Function
 
 Private Function CleanName(ByVal s As String) As String
