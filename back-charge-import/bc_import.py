@@ -524,9 +524,23 @@ def build_rows(entries, prod, reg, lists, builder_ids):
     return rows, review, sheets
 
 
+def make_split_folder(folder):
+    """The Accounting Sheets folder. If Windows won't create it (a file with that name, or a
+    just-deleted folder still held open on the network drive), use a dated one instead."""
+    out_folder = folder / SPLIT_FOLDER_NAME
+    try:
+        out_folder.mkdir(exist_ok=True)
+        return out_folder
+    except (FileExistsError, PermissionError) as err:
+        alt = folder / f"{SPLIT_FOLDER_NAME} {datetime.now():%Y-%m-%d %H%M}"
+        print(f"\nCould not use {out_folder} ({err.strerror}).")
+        print(f"Saving the accounting sheets in {alt} instead.")
+        alt.mkdir(exist_ok=True)
+        return alt
+
+
 def split_sheets(entries, folder, out_folder):
     """Save each back charge's pages as its own PDF. Sets e["split_pdf"]."""
-    out_folder.mkdir(exist_ok=True)
     by_file = defaultdict(list)
     for e in entries:
         by_file[e["file"]].append(e)
@@ -638,7 +652,8 @@ def main():
         print(f"  {f.name}: {len(found)} back charge(s)")
         entries.extend(found)
 
-    split_count = split_sheets(entries, folder, folder / SPLIT_FOLDER_NAME)
+    split_folder = make_split_folder(folder)
+    split_count = split_sheets(entries, folder, split_folder)
     rows, review, sheets = build_rows(entries, prod, reg, lists, builder_ids)
     try:
         write_output(rows, review, sheets, out)
@@ -651,7 +666,7 @@ def main():
     print(f"\nReady to import: {len(rows)}   Skipped (already in Registry or repeated): {skipped}")
     print(f"Cells to confirm (yellow): {guesses}   Cells to fill (orange): {gaps}")
     print(f"Accounting sheets split into their own PDFs: {split_count} "
-          f"(in {folder / SPLIT_FOLDER_NAME})")
+          f"(in {split_folder})")
     print(f"Saved {out}")
 
 
