@@ -28,7 +28,7 @@ files them into the house's G: drive folder.
 
 Usage
 -----
-    pip install pandas pyxlsb openpyxl pdfplumber pypdf
+    pip install pandas pyxlsb openpyxl pdfplumber
     python bc_import.py
     python bc_import.py --folder "D:/some/other/folder" --workbook "D:/tracking.xlsb"
 
@@ -47,7 +47,7 @@ from pathlib import Path
 
 import pandas as pd
 import pdfplumber
-from pypdf import PdfReader, PdfWriter
+import pypdfium2 as pdfium    # installed with pdfplumber; used to split the PDFs
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from pyxlsb import open_workbook
@@ -532,19 +532,21 @@ def split_sheets(entries, folder, out_folder):
         by_file[e["file"]].append(e)
     made = 0
     for fname, es in by_file.items():
-        reader = PdfReader(str(folder / fname))
-        for e in es:
-            po = f"BC-{e['po']}" if e["po"] else Path(fname).stem
-            addr = plain(e["address_pdf"]) or "NO ADDRESS"
-            name = re.sub(r'[\\/:*?"<>|]', "-", f"{po} - {addr} - ACCOUNTING SHEET.pdf")
-            writer = PdfWriter()
-            for i in e["pages"]:
-                writer.add_page(reader.pages[i])
-            path = out_folder / name
-            with open(path, "wb") as fh:
-                writer.write(fh)
-            e["split_pdf"] = str(path.resolve())
-            made += 1
+        src = pdfium.PdfDocument(str(folder / fname))
+        try:
+            for e in es:
+                po = f"BC-{e['po']}" if e["po"] else Path(fname).stem
+                addr = plain(e["address_pdf"]) or "NO ADDRESS"
+                name = re.sub(r'[\\/:*?"<>|]', "-", f"{po} - {addr} - ACCOUNTING SHEET.pdf")
+                path = out_folder / name
+                doc = pdfium.PdfDocument.new()
+                doc.import_pages(src, e["pages"])
+                doc.save(str(path))
+                doc.close()
+                e["split_pdf"] = str(path.resolve())
+                made += 1
+        finally:
+            src.close()
     return made
 
 

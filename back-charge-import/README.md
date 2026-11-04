@@ -24,7 +24,7 @@ Back Charge Data and the old Property Damage PDF macro.
 ## One-time setup
 
 ```bash
-pip install pandas pyxlsb openpyxl pdfplumber pypdf
+pip install pandas pyxlsb openpyxl pdfplumber
 ```
 
 Put `bc_import.py` and `run_import.bat` in the same folder.
