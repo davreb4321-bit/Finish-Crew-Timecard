@@ -1,4 +1,3 @@
-Attribute VB_Name = "BackChargeImport"
 ' ============================================================================
 ' Back Charge Import + Property Damage PDFs
 '

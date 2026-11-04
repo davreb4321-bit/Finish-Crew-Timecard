@@ -28,7 +28,7 @@ Put `bc_import.py` and `run_import.bat` in the same folder.
 
 In the tracking workbook:
 
-1. Press Alt+F11, then File > Import File, and choose `BackChargeImport.bas`.
+1. Press Alt+F11. Either use File > Import File and choose `BackChargeImport.bas`, or Insert > Module and paste the whole file in.
 2. Add a button for `ImportBackCharges` on Back Charge Data.
 3. Right-click the existing PDF button > Assign Macro > `CreatePropertyDamagePDFs`.
 4. Save. Module4 (the old PDF macro) and the All Clear button are no longer needed.
