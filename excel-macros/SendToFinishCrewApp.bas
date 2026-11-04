@@ -5,6 +5,7 @@
 ' (table FINISHCOVER, job date in B4) in desktop Excel, then click the button.
 '
 ' The macro:
+'   0. Clears any filters on the cover sheet so every job row is visible.
 '   1. Checks B4 holds a real date and at least one Job Number is entered.
 '   2. Warns if any Production Schedule lookup shows "Not found".
 '   3. Copies the cover sheet into a new workbook, replaces the P: drive
@@ -42,6 +43,9 @@ Public Sub SendToFinishCrewApp()
             vbCritical, "Send to Finish Crew App"
         Exit Sub
     End If
+
+    ' --- Clear any filters so every job row is visible --------------------
+    ClearFilters ws, lo
 
     ' --- Pull the latest Production Schedule values ----------------------
     On Error Resume Next
@@ -137,6 +141,17 @@ SaveFailed:
     MsgBox "The cover sheet could not be sent." & vbCrLf & vbCrLf & errText & vbCrLf & vbCrLf & _
         "Check that you are signed in to Excel with your Airtron account and have access to " & _
         "the Cover Sheet Import folder.", vbCritical, "Send to Finish Crew App"
+End Sub
+
+' Shows all rows: clears the table's filter buttons and any sheet-level filter.
+' Filter buttons stay in place; only the filtering is undone.
+Private Sub ClearFilters(ws As Worksheet, lo As ListObject)
+    On Error Resume Next    ' a protected sheet can block this; the send still works
+    If lo.ShowAutoFilter Then
+        If lo.AutoFilter.FilterMode Then lo.AutoFilter.ShowAllData
+    End If
+    If ws.FilterMode Then ws.ShowAllData
+    On Error GoTo 0
 End Sub
 
 ' Returns the FINISHCOVER table and sets ws to its sheet.
