@@ -1,0 +1,10 @@
+{
+  "SiteUrl": "https://yourtenant.sharepoint.com/sites/IndyWarrantyTracking-NRG365",
+  "Tenant": "yourtenant.onmicrosoft.com",
+  "ClientId": "00000000-0000-0000-0000-000000000000",
+  "Thumbprint": "CERTIFICATE-THUMBPRINT-HERE",
+  "ListName": "RQI WALKS",
+  "JobRoot": "\\\\fileserver\\Public\\Indianapolis\\JOB FOLDERS",
+  "PhotoFolderName": "Rough Walk Photos",
+  "LogFolder": "D:\\Scripts\\RQI Courier\\logs"
+}
