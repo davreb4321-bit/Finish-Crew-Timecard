@@ -291,6 +291,17 @@ def parse_entries(pages):
     return out
 
 
+def po_number(acct):
+    """Number after BACKCHARGE/PO#, without the BC- prefix (added later):
+    1048000 -> 1048000, INV-15299503 / INV 15299503 / BC-INV-15299503 -> INV-15299503,
+    1234567-01 -> 1234567-01."""
+    m = re.search(r"BACKCHARGE\s*/\s*PO#\s*(?:BC\s*-\s*)?(INV\s*-?\s*)?(\d{4,10}(?:-\d{1,3})?)\b",
+                  acct, re.IGNORECASE)
+    if not m:
+        return None
+    return ("INV-" if m.group(1) else "") + m.group(2)
+
+
 def parse_chunk(chunk):
     # Accounting page ends at APPROVAL; everything after is the builder's paperwork
     split = re.split(r"\n\s*APPROVAL\s*\n", chunk, maxsplit=1, flags=re.IGNORECASE)
@@ -299,7 +310,7 @@ def parse_chunk(chunk):
     notes = re.search(r"NOTES:\s*(.*?)(?=ACTION\s+TO\s+BE\s+TAKEN|CHARGE\s+TO\s+SUB|$)",
                       acct, re.IGNORECASE | re.DOTALL)
     e = {
-        "po": find(r"BACKCHARGE\s*/\s*PO#\s*(\d{4,10})", acct),
+        "po": po_number(acct),
         "posting": to_date(find(r"\bDATE\s+(\d{1,2}/\d{1,2}/\d{2,4})", acct)),
         "division": find(r"DIVISION\s+([A-Z]+)", acct),
         "builder_pdf": find(r"BUILDER\s+NAME\s+(.+)", acct),
